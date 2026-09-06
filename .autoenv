@@ -1,4 +1,17 @@
 # Automatically activate this project's Poetry-managed virtual environment.
+# If pyenv is available, fail with a useful bootstrap command when this repo's
+# .python-version requests an interpreter that has not been installed yet.
+if command -v pyenv >/dev/null 2>&1; then
+    kiai_pyenv_version="$(pyenv local 2>/dev/null || true)"
+    if [ -n "$kiai_pyenv_version" ] && ! pyenv prefix "$kiai_pyenv_version" >/dev/null 2>&1; then
+        echo "Kiai: pyenv Python $kiai_pyenv_version is not installed." >&2
+        echo "Run: pyenv install --skip-existing \"$(pyenv local)\"" >&2
+        unset kiai_pyenv_version
+        return 1
+    fi
+    unset kiai_pyenv_version
+fi
+
 if ! command -v poetry >/dev/null 2>&1; then
     echo "Kiai: Poetry is not installed; cannot activate the project environment." >&2
     return 1

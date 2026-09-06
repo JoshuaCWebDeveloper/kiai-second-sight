@@ -57,11 +57,11 @@ exec "$SHELL"
 This repository already commits the desired interpreter in `.python-version`. Install exactly that version rather than duplicating the version number in the setup instructions:
 
 ```bash
-pyenv install "$(cat .python-version)"
+pyenv install --skip-existing "$(pyenv local)"
 python --version
 ```
 
-Because pyenv automatically reads `.python-version`, no `pyenv local ...` command is needed after cloning the repository. Tell Poetry to build its virtual environment from the interpreter selected by pyenv:
+Because `pyenv local` reads the committed `.python-version`, the version declaration stays in one place. `--skip-existing` makes this setup command safe to rerun: pyenv installs the requested interpreter only when it is missing. Once installed, pyenv automatically resolves Python commands in this repository through that local version; no `pyenv local <version>` write command is needed after cloning. Tell Poetry to build its virtual environment from the interpreter selected by pyenv:
 
 ```bash
 poetry env use "$(pyenv which python)"
