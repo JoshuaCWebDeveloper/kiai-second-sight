@@ -124,7 +124,7 @@ def import_game(args: argparse.Namespace) -> int:
 def setup(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     try:
-        katago = resolve_katago(cfg)
+        katago = resolve_katago(cfg, install=True)
     except KataGoSetupError as exc:
         raise SystemExit(str(exc)) from exc
     source = "managed" if katago.managed else "configured external"

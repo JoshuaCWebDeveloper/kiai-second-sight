@@ -4,6 +4,7 @@ import os
 import platform
 import shutil
 import stat
+import subprocess
 import sys
 import tempfile
 import urllib.request
@@ -32,8 +33,8 @@ class KataGoPaths:
     managed: bool
 
 
-def resolve_katago(config: Config) -> KataGoPaths:
-    """Use a fully configured external KataGo, otherwise provision our managed copy."""
+def resolve_katago(config: Config, *, install: bool = False) -> KataGoPaths:
+    """Resolve the configured runtime. Managed downloads happen only during setup."""
     external = (config.katago_path, config.model_path, config.analysis_config_path)
     if any(external):
         if not all(external):
@@ -51,15 +52,38 @@ def resolve_katago(config: Config) -> KataGoPaths:
         missing = [str(path) for path in (paths.executable, paths.model, paths.config) if not path.exists()]
         if missing:
             raise KataGoSetupError("Configured KataGo file(s) do not exist: " + ", ".join(missing))
+        if install:
+            ManagedKataGo._validate_executable(paths.executable)
         return paths
 
-    return ManagedKataGo(config.managed_root, config.managed_backend).ensure()
+    managed = ManagedKataGo(config.managed_root, config.managed_backend)
+    return managed.ensure() if install else managed.require_installed()
 
 
 class ManagedKataGo:
     def __init__(self, root: Path, backend: str = "eigen") -> None:
         self.root = Path(root).expanduser()
         self.backend = backend.lower()
+
+    def require_installed(self) -> KataGoPaths:
+        paths = self._paths()
+        missing = [str(path) for path in (paths.executable, paths.model, paths.config) if not path.exists()]
+        if missing:
+            raise KataGoSetupError(
+                "KataGo setup has not been completed. Run 'kiai setup' first. Missing: "
+                + ", ".join(missing)
+            )
+        return paths
+
+    def _paths(self) -> KataGoPaths:
+        version = self._katago_version()
+        install_dir = self.root / version / self.backend
+        return KataGoPaths(
+            executable=install_dir / ("katago.exe" if sys.platform == "win32" else "katago"),
+            model=self.root / "models" / MODEL_NAME,
+            config=install_dir / "analysis_example.cfg",
+            managed=True,
+        )
 
     def ensure(self) -> KataGoPaths:
         if self.backend not in SUPPORTED_BACKENDS:
@@ -68,10 +92,9 @@ class ManagedKataGo:
 
         version = self._katago_version()
         asset = self._asset_name(version)
-        install_dir = self.root / version / self.backend
-        executable = install_dir / ("katago.exe" if sys.platform == "win32" else "katago")
-        config = install_dir / "analysis_example.cfg"
-        model = self.root / "models" / MODEL_NAME
+        paths = self._paths()
+        install_dir = paths.executable.parent
+        executable, config, model = paths.executable, paths.config, paths.model
 
         if not executable.exists() or not config.exists():
             print(f"Downloading managed KataGo {version} ({self.backend})...")
@@ -89,7 +112,27 @@ class ManagedKataGo:
         if sys.platform != "win32":
             executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-        return KataGoPaths(executable=executable, model=model, config=config, managed=True)
+        self._validate_executable(executable)
+        return paths
+
+    @staticmethod
+    def _validate_executable(executable: Path) -> None:
+        try:
+            result = subprocess.run(
+                [str(executable), "version"],
+                capture_output=True,
+                text=True,
+                timeout=15,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise KataGoSetupError(f"KataGo runtime validation failed: {exc}") from exc
+        if result.returncode != 0:
+            detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+            raise KataGoSetupError(
+                "KataGo was downloaded but cannot run on this system. "
+                f"Runtime error: {detail}"
+            )
 
     def _katago_version(self) -> str:
         if sys.platform.startswith("linux"):
