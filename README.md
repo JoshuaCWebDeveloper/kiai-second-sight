@@ -26,24 +26,84 @@ The rendering is intentionally our own rather than GUI automation of KaTrain. Ka
 
 ## Install
 
-Python 3.11+ is required.
+Python 3.11+ and Poetry are required. KataGo does **not** need to be installed separately by default.
+
+If Poetry is not installed yet, one common installation method is:
 
 ```bash
-python -m venv .venv
-source .venv/bin/activate  # Windows PowerShell: .venv\\Scripts\\Activate.ps1
-pip install -e '.[dev]'
+pipx install poetry
+```
+
+### 1. Select Python and install the project
+
+Poetry manages the project's virtual environment as well as its dependencies. It does not install Python itself, so make sure Python 3.11 or newer is installed first. If you have more than one Python version installed, select the interpreter Poetry should use:
+
+```bash
+poetry env use 3.11
+```
+
+Then install the locked dependencies and the `kiai` command into that environment:
+
+```bash
+poetry install
 cp kiai.example.toml kiai.toml
 ```
 
-Edit `kiai.toml` to point at a KataGo executable, model, and **analysis config that reports win rates as BLACK**. KaTrain's bundled KataGo analysis config uses `reportAnalysisWinratesAs = BLACK`, which is the expected configuration for this version.
+To activate the Poetry environment in the current shell:
 
-You may instead set:
-
-```text
-KIAI_KATAGO_PATH
-KIAI_KATAGO_MODEL
-KIAI_KATAGO_CONFIG
+```bash
+eval "$(poetry env activate)"
 ```
+
+Once activated, normal shell commands resolve inside the project environment, so use `python`, `pytest`, `ruff`, and `kiai` directly rather than prefixing every command with `poetry run`.
+
+Leave the environment with:
+
+```bash
+deactivate
+```
+
+### 2. Optional: install autoenv for automatic activation
+
+The repository includes `.autoenv` and `.autoenv.leave`. With [autoenv](https://github.com/hyperupcall/autoenv) configured as below, entering the repository activates the Poetry environment and leaving the repository deactivates it.
+
+Install autoenv using the same setup documented in the JoshuaCWebDeveloper docs:
+
+```bash
+nvm use node
+```
+
+```bash
+curl -#fLo- 'https://raw.githubusercontent.com/hyperupcall/autoenv/master/scripts/install.sh' | sh
+```
+
+The installer appends a line to `~/.bashrc` that sources `autoenv/activate.sh`. Add these variables to `~/.bashrc` immediately **before** that source line:
+
+```bash
+AUTOENV_ENABLE_LEAVE=yes
+AUTOENV_ENV_FILENAME=.autoenv
+AUTOENV_ENV_LEAVE_FILENAME=.autoenv.leave
+```
+
+Reload your shell after editing `~/.bashrc`:
+
+```bash
+source ~/.bashrc
+```
+
+On the first visit to the repository, autoenv may ask you to authorize the checked-in environment files. The Poetry environment must already exist, so run `poetry install` once before relying on automatic activation.
+
+### 3. Configure and provision KataGo
+
+Edit `kiai.toml` for your player name and any desired analysis settings, then run:
+
+```bash
+kiai setup
+```
+
+If no external KataGo paths are configured, `kiai setup` (or the first `kiai import`) downloads a pinned KataGo runtime, analysis config, and neural-network model into `~/.kiai-second-sight/katago`. Downloads are cached and reused. The default managed backend is portable CPU `eigen`; `eigenavx2` and `opencl` can be selected in `kiai.toml`.
+
+To reuse an existing KataGo or KaTrain installation, set **all three** of `katago_path`, `model_path`, and `config_path` under `[analysis]`. A complete external configuration takes precedence and suppresses managed downloads. The equivalent environment variables are `KIAI_KATAGO_PATH`, `KIAI_KATAGO_MODEL`, and `KIAI_KATAGO_CONFIG`. The analysis config must report win rates as BLACK.
 
 ## Use
 

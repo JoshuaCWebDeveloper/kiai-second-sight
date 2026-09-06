@@ -1,33 +1,29 @@
-[build-system]
-requires = ["hatchling>=1.26"]
-build-backend = "hatchling.build"
-
-[project]
+[tool.poetry]
 name = "kiai-second-sight"
 version = "0.1.0"
 description = "Turn Go mistakes into visual study cards using KataGo analysis."
+authors = ["JoshuaCWebDeveloper"]
+license = "MIT"
 readme = "README.md"
-requires-python = ">=3.11"
-license = {text = "MIT"}
-authors = [{name = "JoshuaCWebDeveloper"}]
-dependencies = [
-  "Pillow>=10.4",
-  "python-pptx>=1.0.2",
-  "sgfmill>=1.1.1",
-]
+packages = [{ include = "kiai_second_sight", from = "src" }]
 
-[project.optional-dependencies]
-dev = [
-  "pytest>=8.3",
-  "ruff>=0.9",
-]
+[tool.poetry.dependencies]
+python = "^3.11"
+Pillow = ">=10.4"
+python-pptx = ">=1.0.2"
+sgfmill = ">=1.1.1"
 
-[project.scripts]
+[tool.poetry.group.dev.dependencies]
+pytest = ">=8.3"
+ruff = ">=0.9"
+
+[tool.poetry.scripts]
 kiai-second-sight = "kiai_second_sight.cli:main"
 kiai = "kiai_second_sight.cli:main"
 
-[tool.hatch.build.targets.wheel]
-packages = ["src/kiai_second_sight"]
+[build-system]
+requires = ["poetry-core>=2.0.0,<3.0.0"]
+build-backend = "poetry.core.masonry.api"
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

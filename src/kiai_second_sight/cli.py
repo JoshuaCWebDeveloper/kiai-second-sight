@@ -7,6 +7,7 @@ from pathlib import Path
 from .board import board_at_turn
 from .config import load_config
 from .katago import KataGoAnalyzer
+from .managed_katago import KataGoSetupError, resolve_katago
 from .manifest import upsert_cards
 from .models import Color
 from .render import BoardRenderer
@@ -33,16 +34,13 @@ def build_parser() -> argparse.ArgumentParser:
     imp.add_argument("--me", type=_player, help="Your color; inferred from configured names if omitted")
     imp.add_argument("--dry-run", action="store_true", help="Analyze/select only; do not render or update deck")
 
+    sub.add_parser("setup", help="Download/verify the configured KataGo runtime")
+
     deck = sub.add_parser("rebuild-deck", help="Rebuild PPTX from the current manifest")
     deck.add_argument("--manifest", type=Path)
     deck.add_argument("--output", type=Path)
     return parser
 
-
-def _require(value: str | None, name: str) -> str:
-    if not value:
-        raise SystemExit(f"Missing {name}. Set it in kiai.toml or the matching KIAI_* environment variable.")
-    return value
 
 
 def import_game(args: argparse.Namespace) -> int:
@@ -63,10 +61,17 @@ def import_game(args: argparse.Namespace) -> int:
     )
     print(f"Analyzing {len(turns)} positions around {len(player_moves)} of your moves...")
 
+    try:
+        katago = resolve_katago(cfg)
+    except KataGoSetupError as exc:
+        raise SystemExit(str(exc)) from exc
+    source = "managed" if katago.managed else "configured external"
+    print(f"Using {source} KataGo: {katago.executable}")
+
     with KataGoAnalyzer(
-        _require(cfg.katago_path, "analysis.katago_path"),
-        _require(cfg.model_path, "analysis.model_path"),
-        _require(cfg.analysis_config_path, "analysis.config_path"),
+        katago.executable,
+        katago.model,
+        katago.config,
         max_visits=cfg.max_visits,
     ) as analyzer:
         analyses = analyzer.analyze_game(game, turns)
@@ -116,6 +121,20 @@ def import_game(args: argparse.Namespace) -> int:
     return 0
 
 
+def setup(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    try:
+        katago = resolve_katago(cfg)
+    except KataGoSetupError as exc:
+        raise SystemExit(str(exc)) from exc
+    source = "managed" if katago.managed else "configured external"
+    print(f"KataGo ready ({source}).")
+    print(f"  executable: {katago.executable}")
+    print(f"  model:      {katago.model}")
+    print(f"  config:     {katago.config}")
+    return 0
+
+
 def rebuild_deck(args: argparse.Namespace) -> int:
     cfg = load_config(args.config)
     manifest_path = args.manifest or cfg.output_root / "cards" / "manifest.json"
@@ -130,6 +149,8 @@ def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     if args.command == "import":
         return import_game(args)
+    if args.command == "setup":
+        return setup(args)
     if args.command == "rebuild-deck":
         return rebuild_deck(args)
     raise AssertionError(args.command)

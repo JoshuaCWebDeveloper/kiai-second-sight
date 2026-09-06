@@ -1,0 +1,12 @@
+# Automatically activate this project's Poetry-managed virtual environment.
+if ! command -v poetry >/dev/null 2>&1; then
+    echo "Kiai: Poetry is not installed; cannot activate the project environment." >&2
+    return 1
+fi
+
+if ! poetry env info --path >/dev/null 2>&1; then
+    echo "Kiai: Poetry environment does not exist yet. Run 'poetry install' once." >&2
+    return 1
+fi
+
+eval "$(poetry env activate)"

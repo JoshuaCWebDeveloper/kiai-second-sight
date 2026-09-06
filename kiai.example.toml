@@ -3,10 +3,17 @@
 names = ["your-ogs-name"]
 
 [analysis]
-# Point these at the same KataGo executable, model, and analysis config you use with KaTrain.
-katago_path = "/path/to/katago"
-model_path = "/path/to/model.bin.gz"
-config_path = "/path/to/analysis_config.cfg"
+# By default Second Sight downloads and manages KataGo, its analysis config, and a model.
+# The portable CPU backend is the default. You can also choose "eigenavx2" or "opencl".
+managed_backend = "eigen"
+# managed_root = "~/.kiai-second-sight/katago"
+
+# To use your own KataGo/KaTrain installation instead, configure ALL THREE paths below.
+# If all three are present, they take precedence and nothing is downloaded.
+# katago_path = "C:/path/to/katago.exe"
+# model_path = "C:/path/to/model.bin.gz"
+# config_path = "C:/path/to/analysis_config.cfg"
+
 max_visits = 3000
 
 [selection]
