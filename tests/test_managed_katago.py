@@ -28,3 +28,14 @@ def test_external_katago_wins_when_fully_configured(tmp_path: Path):
     assert paths.model == model
     assert paths.config == analysis
     assert paths.managed is False
+
+
+def test_managed_linux_uses_ubuntu_20_compatible_release(monkeypatch, tmp_path: Path):
+    monkeypatch.setattr("kiai_second_sight.managed_katago.sys.platform", "linux")
+    monkeypatch.setattr("kiai_second_sight.managed_katago.platform.machine", lambda: "x86_64")
+    managed = __import__(
+        "kiai_second_sight.managed_katago", fromlist=["ManagedKataGo"]
+    ).ManagedKataGo(tmp_path, "eigen")
+    version = managed._katago_version()
+    assert version == "v1.15.3"
+    assert managed._asset_name(version) == "katago-v1.15.3-eigen-linux-x64.zip"

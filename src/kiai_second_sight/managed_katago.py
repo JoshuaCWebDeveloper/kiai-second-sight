@@ -13,7 +13,8 @@ from pathlib import Path
 
 from .config import Config
 
-KATAGO_VERSION = "v1.18.1"
+KATAGO_VERSION_WINDOWS = "v1.18.1"
+KATAGO_VERSION_LINUX = "v1.15.3"
 MODEL_VERSION = "v1.17.1"
 MODEL_NAME = "b10c384h6nbttflrs.bin.gz"
 SUPPORTED_BACKENDS = {"eigen", "eigenavx2", "opencl"}
@@ -65,15 +66,16 @@ class ManagedKataGo:
             choices = ", ".join(sorted(SUPPORTED_BACKENDS))
             raise KataGoSetupError(f"Unsupported managed backend {self.backend!r}; choose one of: {choices}")
 
-        asset = self._asset_name()
-        install_dir = self.root / KATAGO_VERSION / self.backend
+        version = self._katago_version()
+        asset = self._asset_name(version)
+        install_dir = self.root / version / self.backend
         executable = install_dir / ("katago.exe" if sys.platform == "win32" else "katago")
         config = install_dir / "analysis_example.cfg"
         model = self.root / "models" / MODEL_NAME
 
         if not executable.exists() or not config.exists():
-            print(f"Downloading managed KataGo {KATAGO_VERSION} ({self.backend})...")
-            self._install_katago(asset, install_dir)
+            print(f"Downloading managed KataGo {version} ({self.backend})...")
+            self._install_katago(version, asset, install_dir)
         if not model.exists():
             print(f"Downloading managed KataGo model {MODEL_NAME}...")
             self._download(
@@ -89,7 +91,20 @@ class ManagedKataGo:
 
         return KataGoPaths(executable=executable, model=model, config=config, managed=True)
 
-    def _asset_name(self) -> str:
+    def _katago_version(self) -> str:
+        if sys.platform.startswith("linux"):
+            # v1.15.3 is the newest KataGo release line whose Linux binaries were built
+            # on Ubuntu 20.04. Newer Linux releases are built on Ubuntu 22.04 and require
+            # newer system libraries such as OpenSSL 3.
+            return KATAGO_VERSION_LINUX
+        if sys.platform == "win32":
+            return KATAGO_VERSION_WINDOWS
+        raise KataGoSetupError(
+            f"Managed KataGo currently supports Windows and Linux; detected {sys.platform!r}. "
+            "Configure an external KataGo installation on this platform."
+        )
+
+    def _asset_name(self, version: str) -> str:
         machine = platform.machine().lower()
         if machine not in {"x86_64", "amd64"}:
             raise KataGoSetupError(
@@ -105,10 +120,10 @@ class ManagedKataGo:
                 f"Managed KataGo currently supports Windows and Linux; detected {sys.platform!r}. "
                 "Configure an external KataGo installation on this platform."
             )
-        return f"katago-{KATAGO_VERSION}-{self.backend}-{os_name}-x64.zip"
+        return f"katago-{version}-{self.backend}-{os_name}-x64.zip"
 
-    def _install_katago(self, asset: str, install_dir: Path) -> None:
-        url = f"https://github.com/lightvector/KataGo/releases/download/{KATAGO_VERSION}/{asset}"
+    def _install_katago(self, version: str, asset: str, install_dir: Path) -> None:
+        url = f"https://github.com/lightvector/KataGo/releases/download/{version}/{asset}"
         install_dir.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="kiai-katago-") as temp:
             archive = Path(temp) / asset

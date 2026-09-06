@@ -131,6 +131,7 @@ kiai setup
 ```
 
 If no external KataGo paths are configured, `kiai setup` (or the first `kiai import`) downloads a pinned KataGo runtime, analysis config, and neural-network model into `~/.kiai-second-sight/katago`. Downloads are cached and reused. The default managed backend is portable CPU `eigen`; `eigenavx2` and `opencl` can be selected in `kiai.toml`.
+On Linux, Kiai currently pins KataGo v1.15.3 because its prebuilt Linux binaries were built on Ubuntu 20.04 and remain compatible with Ubuntu 20.04-era system libraries. Newer KataGo Linux releases are built on Ubuntu 22.04 and require newer libraries such as OpenSSL 3. Windows uses the newer managed KataGo release.
 
 To reuse an existing KataGo or KaTrain installation, set **all three** of `katago_path`, `model_path`, and `config_path` under `[analysis]`. A complete external configuration takes precedence and suppresses managed downloads. The equivalent environment variables are `KIAI_KATAGO_PATH`, `KIAI_KATAGO_MODEL`, and `KIAI_KATAGO_CONFIG`. The analysis config must report win rates as BLACK.
 
