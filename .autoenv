@@ -1,3 +1,2 @@
-# Use the Python version declared by this repository, then activate its Poetry environment.
-pyenv shell "$(pyenv local)"
+# Activate this project's Poetry-managed virtual environment.
 eval "$(poetry env activate)"

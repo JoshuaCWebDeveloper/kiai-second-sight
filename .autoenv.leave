@@ -1,3 +1,2 @@
-# Leave the Poetry environment and restore pyenv's normal version resolution.
+# Leave the project's Poetry-managed virtual environment.
 deactivate
-pyenv shell --unset

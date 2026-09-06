@@ -90,7 +90,7 @@ deactivate
 
 ### 2. Optional: install autoenv for automatic activation
 
-The repository includes `.autoenv` and `.autoenv.leave`. With [autoenv](https://github.com/hyperupcall/autoenv) configured as below, entering the repository selects the Python version declared by `.python-version` with `pyenv shell` and activates the Poetry environment. Leaving the repository deactivates Poetry and clears that pyenv shell override.
+The repository includes `.autoenv` and `.autoenv.leave`. With [autoenv](https://github.com/hyperupcall/autoenv) configured as below, entering the repository activates the Poetry environment and leaving the repository deactivates it. Pyenv already selects the interpreter declared by `.python-version` whenever Python commands are resolved from this repository, so no additional `pyenv shell` override is needed.
 
 Install autoenv using the same setup documented in the JoshuaCWebDeveloper docs:
 
