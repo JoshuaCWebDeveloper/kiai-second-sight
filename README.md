@@ -33,7 +33,7 @@ The rendering is intentionally our own rather than GUI automation of KaTrain. Ka
 Run:
 
 ```bash
-export PYENV_GIT_TAG=v{{VERSION}} && curl -fsSL https://pyenv.run | bash
+export PYENV_GIT_TAG=v2.8.5 && curl -fsSL https://pyenv.run | bash
 ```
 
 Run:
@@ -66,7 +66,7 @@ pyenv install --skip-existing "$(pyenv local)"
 From inside the project root directory, run:
 
 ```bash
-curl -sSL https://install.python-poetry.org | python3 - --version {{VERSION}}
+curl -sSL https://install.python-poetry.org | python3 - --version 2.4.3
 ```
 
 and then:
