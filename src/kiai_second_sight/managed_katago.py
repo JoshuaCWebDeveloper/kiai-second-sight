@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import io
 import os
 import platform
 import shutil
 import stat
 import subprocess
 import sys
+import tarfile
 import tempfile
 import urllib.request
 import zipfile
@@ -19,6 +21,10 @@ KATAGO_VERSION_LINUX = "v1.15.3"
 MODEL_VERSION = "v1.17.1"
 MODEL_NAME = "b10c384h6nbttflrs.bin.gz"
 SUPPORTED_BACKENDS = {"eigen", "eigenavx2", "opencl"}
+UBUNTU_FOCAL_LIBZIP_URL = (
+    "https://archive.ubuntu.com/ubuntu/pool/universe/libz/libzip/"
+    "libzip5_1.5.1-0ubuntu1_amd64.deb"
+)
 
 
 class KataGoSetupError(RuntimeError):
@@ -67,7 +73,11 @@ class ManagedKataGo:
 
     def require_installed(self) -> KataGoPaths:
         paths = self._paths()
-        missing = [str(path) for path in (paths.executable, paths.model, paths.config) if not path.exists()]
+        required = [paths.executable, paths.model, paths.config]
+        if sys.platform.startswith("linux"):
+            install_dir = paths.executable.parent
+            required.extend([install_dir / "katago.real", install_dir / "lib" / "libzip.so.5"])
+        missing = [str(path) for path in required if not path.exists()]
         if missing:
             raise KataGoSetupError(
                 "KataGo setup has not been completed. Run 'kiai setup' first. Missing: "
@@ -109,11 +119,92 @@ class ManagedKataGo:
         if not executable.exists() or not config.exists() or not model.exists():
             raise KataGoSetupError("Managed KataGo installation did not produce all required files")
 
-        if sys.platform != "win32":
+        if sys.platform.startswith("linux"):
+            self._ensure_linux_runtime_bundle(install_dir)
+        elif sys.platform != "win32":
             executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
         self._validate_executable(executable)
         return paths
+
+
+    def _ensure_linux_runtime_bundle(self, install_dir: Path) -> None:
+        """Bundle focal's libzip5 beside KataGo so Ubuntu 20.04 needs no system package."""
+        launcher = install_dir / "katago"
+        real_executable = install_dir / "katago.real"
+        lib_dir = install_dir / "lib"
+        libzip = lib_dir / "libzip.so.5"
+
+        # Migrate an already-downloaded v1.15.3 install in place.
+        if launcher.exists() and not real_executable.exists():
+            launcher.rename(real_executable)
+
+        if not real_executable.exists():
+            raise KataGoSetupError("Managed KataGo executable is missing after installation")
+
+        if not libzip.exists():
+            print("Downloading Ubuntu 20.04-compatible libzip5 runtime...")
+            with tempfile.TemporaryDirectory(prefix="kiai-libzip-") as temp:
+                package = Path(temp) / "libzip5.deb"
+                self._download(UBUNTU_FOCAL_LIBZIP_URL, package)
+                self._extract_libzip_from_deb(package, lib_dir)
+
+        launcher.write_text(
+            "#!/bin/sh\n"
+            'here=$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)\n'
+            'LD_LIBRARY_PATH="$here/lib${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}"\n'
+            "export LD_LIBRARY_PATH\n"
+            'exec "$here/katago.real" "$@"\n',
+            encoding="utf-8",
+        )
+        launcher.chmod(0o755)
+        real_executable.chmod(
+            real_executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+        )
+
+    @staticmethod
+    def _extract_libzip_from_deb(package: Path, lib_dir: Path) -> None:
+        data = package.read_bytes()
+        if not data.startswith(b"!<arch>\n"):
+            raise KataGoSetupError("Downloaded libzip5 package is not a valid Debian archive")
+
+        offset = 8
+        payload: bytes | None = None
+        payload_name = ""
+        while offset + 60 <= len(data):
+            header = data[offset : offset + 60]
+            name = header[:16].decode("ascii", errors="replace").strip().rstrip("/")
+            try:
+                size = int(header[48:58].decode("ascii").strip())
+            except ValueError as exc:
+                raise KataGoSetupError("Invalid Debian archive member size") from exc
+            start = offset + 60
+            end = start + size
+            if name.startswith("data.tar"):
+                payload = data[start:end]
+                payload_name = name
+                break
+            offset = end + (size % 2)
+
+        if payload is None:
+            raise KataGoSetupError("libzip5 package did not contain a data archive")
+        if payload_name.endswith(".zst"):
+            raise KataGoSetupError("Unsupported zstd-compressed libzip5 package")
+
+        lib_dir.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
+            member = next(
+                (m for m in archive.getmembers() if m.isfile() and m.name.endswith("/libzip.so.5.0")),
+                None,
+            )
+            if member is None:
+                raise KataGoSetupError("libzip5 package did not contain libzip.so.5.0")
+            source = archive.extractfile(member)
+            if source is None:
+                raise KataGoSetupError("Could not extract libzip.so.5.0")
+            contents = source.read()
+            (lib_dir / "libzip.so.5.0").write_bytes(contents)
+            (lib_dir / "libzip.so.5").write_bytes(contents)
 
     @staticmethod
     def _validate_executable(executable: Path) -> None:

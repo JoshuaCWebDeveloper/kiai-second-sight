@@ -63,3 +63,19 @@ def test_setup_surfaces_runtime_loader_errors(monkeypatch, tmp_path: Path):
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Result())
     with pytest.raises(KataGoSetupError, match="libzip.so.5"):
         ManagedKataGo._validate_executable(executable)
+
+
+def test_import_requires_complete_linux_runtime_bundle(monkeypatch, tmp_path: Path):
+    from kiai_second_sight.managed_katago import ManagedKataGo
+
+    monkeypatch.setattr("kiai_second_sight.managed_katago.sys.platform", "linux")
+    monkeypatch.setattr("kiai_second_sight.managed_katago.platform.machine", lambda: "x86_64")
+    managed = ManagedKataGo(tmp_path, "eigen")
+    paths = managed._paths()
+    paths.executable.parent.mkdir(parents=True)
+    for path in (paths.executable, paths.model, paths.config):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+
+    with pytest.raises(KataGoSetupError, match="kiai setup"):
+        managed.require_installed()
