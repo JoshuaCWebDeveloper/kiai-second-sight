@@ -42,29 +42,26 @@ Poetry manages the project's virtual environment and dependencies, while pyenv m
 curl -fsSL https://pyenv.run | bash
 ```
 
-Add pyenv to your shell startup file (for Bash, `~/.bashrc`):
+The installer downloads pyenv but does not itself modify your shell startup files. The current official pyenv instructions provide a separate command that installs the recommended shell setup automatically:
 
 ```bash
-export PYENV_ROOT="$HOME/.pyenv"
-[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
-eval "$(pyenv init - bash)"
+~/.pyenv/bin/pyenv init --install
 ```
 
-Reload the shell:
+Then restart the shell so the PATH and shim changes take effect:
 
 ```bash
-source ~/.bashrc
+exec "$SHELL"
 ```
 
-Install Python 3.11 and select it for this repository:
+This repository already commits the desired interpreter in `.python-version`. Install exactly that version rather than duplicating the version number in the setup instructions:
 
 ```bash
-pyenv install 3.11.16
-pyenv local 3.11.16
+pyenv install "$(cat .python-version)"
 python --version
 ```
 
-`pyenv local` writes a `.python-version` file in the repository, so entering the project selects Python 3.11 automatically whenever pyenv is active. Tell Poetry to build its virtual environment from that interpreter:
+Because pyenv automatically reads `.python-version`, no `pyenv local ...` command is needed after cloning the repository. Tell Poetry to build its virtual environment from the interpreter selected by pyenv:
 
 ```bash
 poetry env use "$(pyenv which python)"
