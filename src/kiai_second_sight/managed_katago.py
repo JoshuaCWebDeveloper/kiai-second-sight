@@ -18,8 +18,8 @@ from .config import Config
 
 KATAGO_VERSION_WINDOWS = "v1.18.1"
 KATAGO_VERSION_LINUX = "v1.15.3"
-MODEL_VERSION = "v1.17.1"
-MODEL_NAME = "b10c384h6nbttflrs.bin.gz"
+MODEL_VERSION = "v1.12.4"
+MODEL_NAME = "b18c384nbt-uec.bin.gz"
 SUPPORTED_BACKENDS = {"eigen", "eigenavx2", "opencl"}
 UBUNTU_FOCAL_LIBZIP_URL = (
     "https://archive.ubuntu.com/ubuntu/pool/universe/libz/libzip/"
@@ -59,7 +59,7 @@ def resolve_katago(config: Config, *, install: bool = False) -> KataGoPaths:
         if missing:
             raise KataGoSetupError("Configured KataGo file(s) do not exist: " + ", ".join(missing))
         if install:
-            ManagedKataGo._validate_executable(paths.executable)
+            ManagedKataGo._validate_runtime(paths)
         return paths
 
     managed = ManagedKataGo(config.managed_root, config.managed_backend)
@@ -124,7 +124,7 @@ class ManagedKataGo:
         elif sys.platform != "win32":
             executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
 
-        self._validate_executable(executable)
+        self._validate_runtime(paths)
         return paths
 
 
@@ -207,13 +207,23 @@ class ManagedKataGo:
             (lib_dir / "libzip.so.5").write_bytes(contents)
 
     @staticmethod
-    def _validate_executable(executable: Path) -> None:
+    def _validate_runtime(paths: KataGoPaths) -> None:
+        """Launch the analysis engine so setup validates the executable, model, and config together."""
+        query = '{"id":"setup","action":"query_version"}\n'
         try:
             result = subprocess.run(
-                [str(executable), "version"],
+                [
+                    str(paths.executable),
+                    "analysis",
+                    "-model",
+                    str(paths.model),
+                    "-config",
+                    str(paths.config),
+                ],
+                input=query,
                 capture_output=True,
                 text=True,
-                timeout=15,
+                timeout=60,
                 check=False,
             )
         except (OSError, subprocess.SubprocessError) as exc:
@@ -221,7 +231,7 @@ class ManagedKataGo:
         if result.returncode != 0:
             detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
             raise KataGoSetupError(
-                "KataGo was downloaded but cannot run on this system. "
+                "KataGo setup validation failed while loading the analysis engine, model, or config. "
                 f"Runtime error: {detail}"
             )
 

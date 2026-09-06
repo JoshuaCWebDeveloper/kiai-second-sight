@@ -130,8 +130,8 @@ Edit `kiai.toml` to set your player name and any desired analysis settings, then
 kiai setup
 ```
 
-If no external KataGo paths are configured, `kiai setup` downloads a pinned KataGo runtime, analysis config, and neural-network model into `~/.kiai-second-sight/katago`. It also launches KataGo once to verify that the downloaded runtime can actually start on the host. Downloads are cached and reused. The default managed backend is portable CPU `eigen`; `eigenavx2` and `opencl` can be selected in `kiai.toml`.
-On Linux, Kiai currently pins KataGo v1.15.3 because its prebuilt Linux binaries were built on Ubuntu 20.04. Kiai also downloads and bundles Ubuntu 20.04's `libzip5` runtime alongside KataGo, so setup does not require installing `libzip5` system-wide. Newer KataGo Linux releases are built on Ubuntu 22.04 and require newer libraries such as OpenSSL 3. Windows uses the newer managed KataGo release.
+If no external KataGo paths are configured, `kiai setup` downloads a pinned KataGo runtime, analysis config, and neural-network model into `~/.kiai-second-sight/katago`. It launches the analysis engine with the downloaded model and config so setup verifies the complete managed runtime, not just that the KataGo executable starts. Downloads are cached and reused. The default managed backend is portable CPU `eigen`; `eigenavx2` and `opencl` can be selected in `kiai.toml`.
+On Linux, Kiai currently pins KataGo v1.15.3 because its prebuilt Linux binaries were built on Ubuntu 20.04. The managed model is the v1.12.4 `b18c384nbt-uec` network, which is compatible with KataGo v1.15.3; newer transformer models require KataGo v1.17+. Kiai also downloads and bundles Ubuntu 20.04's `libzip5` runtime alongside KataGo, so setup does not require installing `libzip5` system-wide. Newer KataGo Linux releases are built on Ubuntu 22.04 and require newer libraries such as OpenSSL 3. Windows uses the newer managed KataGo release.
 
 `kiai setup` is required before importing games. `kiai import` never downloads or installs KataGo resources; if the configured managed runtime is missing, it tells you to run setup first.
 

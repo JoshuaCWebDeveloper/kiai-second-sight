@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from kiai_second_sight.config import Config
-from kiai_second_sight.managed_katago import KataGoSetupError, resolve_katago
+from kiai_second_sight.managed_katago import KataGoPaths, KataGoSetupError, resolve_katago
 
 
 def test_external_katago_requires_all_three_paths(tmp_path: Path):
@@ -53,7 +53,10 @@ def test_setup_surfaces_runtime_loader_errors(monkeypatch, tmp_path: Path):
     from kiai_second_sight.managed_katago import ManagedKataGo
 
     executable = tmp_path / "katago"
-    executable.write_text("x")
+    model = tmp_path / "model.bin.gz"
+    config = tmp_path / "analysis.cfg"
+    for path in (executable, model, config):
+        path.write_text("x")
 
     class Result:
         returncode = 127
@@ -61,8 +64,9 @@ def test_setup_surfaces_runtime_loader_errors(monkeypatch, tmp_path: Path):
         stderr = "error while loading shared libraries: libzip.so.5: cannot open shared object file"
 
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: Result())
+    paths = KataGoPaths(executable=executable, model=model, config=config, managed=True)
     with pytest.raises(KataGoSetupError, match="libzip.so.5"):
-        ManagedKataGo._validate_executable(executable)
+        ManagedKataGo._validate_runtime(paths)
 
 
 def test_import_requires_complete_linux_runtime_bundle(monkeypatch, tmp_path: Path):
@@ -79,3 +83,10 @@ def test_import_requires_complete_linux_runtime_bundle(monkeypatch, tmp_path: Pa
 
     with pytest.raises(KataGoSetupError, match="kiai setup"):
         managed.require_installed()
+
+
+def test_managed_model_is_compatible_with_linux_katago():
+    from kiai_second_sight.managed_katago import MODEL_NAME, MODEL_VERSION
+
+    assert MODEL_VERSION == "v1.12.4"
+    assert MODEL_NAME == "b18c384nbt-uec.bin.gz"
