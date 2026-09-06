@@ -1,4 +1,3 @@
-# Automatically leave the project's virtual environment when exiting the directory.
-if command -v deactivate >/dev/null 2>&1; then
-    deactivate
-fi
+# Leave the Poetry environment and restore pyenv's normal version resolution.
+deactivate
+pyenv shell --unset

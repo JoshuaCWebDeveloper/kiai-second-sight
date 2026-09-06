@@ -48,10 +48,10 @@ The installer downloads pyenv but does not itself modify your shell startup file
 ~/.pyenv/bin/pyenv init --install
 ```
 
-Then restart the shell so the PATH and shim changes take effect:
+Then reload Bash so the PATH and shim changes take effect:
 
 ```bash
-exec "$SHELL"
+source ~/.bashrc
 ```
 
 This repository already commits the desired interpreter in `.python-version`. Install exactly that version rather than duplicating the version number in the setup instructions:
@@ -90,7 +90,7 @@ deactivate
 
 ### 2. Optional: install autoenv for automatic activation
 
-The repository includes `.autoenv` and `.autoenv.leave`. With [autoenv](https://github.com/hyperupcall/autoenv) configured as below, entering the repository activates the Poetry environment and leaving the repository deactivates it.
+The repository includes `.autoenv` and `.autoenv.leave`. With [autoenv](https://github.com/hyperupcall/autoenv) configured as below, entering the repository selects the Python version declared by `.python-version` with `pyenv shell` and activates the Poetry environment. Leaving the repository deactivates Poetry and clears that pyenv shell override.
 
 Install autoenv using the same setup documented in the JoshuaCWebDeveloper docs:
 
