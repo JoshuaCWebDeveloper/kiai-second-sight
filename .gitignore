@@ -1,0 +1,16 @@
+.venv/
+__pycache__/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# Local configuration and generated study data
+kiai.toml
+inbox/
+games/
+analysis/
+cards/
+deck/

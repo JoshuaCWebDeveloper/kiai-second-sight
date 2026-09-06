@@ -1,0 +1,23 @@
+[player]
+# Used to infer whether you were Black or White from SGF PB/PW fields.
+names = ["your-ogs-name"]
+
+[analysis]
+# Point these at the same KataGo executable, model, and analysis config you use with KaTrain.
+katago_path = "/path/to/katago"
+model_path = "/path/to/model.bin.gz"
+config_path = "/path/to/analysis_config.cfg"
+max_visits = 3000
+
+[selection]
+# A card is created only when your pre-move win rate is strictly above this value...
+min_start_winrate = 0.50
+# ...and your move loses at least this many absolute win-rate points.
+min_loss_pp = 0.10
+
+[render]
+top_moves = 5
+image_size = 1200
+
+[output]
+root = "."
