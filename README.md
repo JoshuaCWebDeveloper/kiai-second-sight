@@ -34,12 +34,40 @@ If Poetry is not installed yet, one common installation method is:
 pipx install poetry
 ```
 
-### 1. Select Python and install the project
+### 1. Install Python 3.11 with pyenv and install the project
 
-Poetry manages the project's virtual environment as well as its dependencies. It does not install Python itself, so make sure Python 3.11 or newer is installed first. If you have more than one Python version installed, select the interpreter Poetry should use:
+Poetry manages the project's virtual environment and dependencies, while pyenv manages the Python interpreter itself. Install pyenv first if it is not already available:
 
 ```bash
-poetry env use 3.11
+curl -fsSL https://pyenv.run | bash
+```
+
+Add pyenv to your shell startup file (for Bash, `~/.bashrc`):
+
+```bash
+export PYENV_ROOT="$HOME/.pyenv"
+[[ -d $PYENV_ROOT/bin ]] && export PATH="$PYENV_ROOT/bin:$PATH"
+eval "$(pyenv init - bash)"
+```
+
+Reload the shell:
+
+```bash
+source ~/.bashrc
+```
+
+Install Python 3.11 and select it for this repository:
+
+```bash
+pyenv install 3.11.16
+pyenv local 3.11.16
+python --version
+```
+
+`pyenv local` writes a `.python-version` file in the repository, so entering the project selects Python 3.11 automatically whenever pyenv is active. Tell Poetry to build its virtual environment from that interpreter:
+
+```bash
+poetry env use "$(pyenv which python)"
 ```
 
 Then install the locked dependencies and the `kiai` command into that environment:
