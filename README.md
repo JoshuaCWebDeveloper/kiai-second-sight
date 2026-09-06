@@ -112,7 +112,13 @@ poetry install
 
 #### Configure and provision KataGo
 
-Edit `kiai.toml` for your player name and any desired analysis settings, then run:
+Create your local configuration from the checked-in example:
+
+```bash
+cp kiai.example.toml kiai.toml
+```
+
+Edit `kiai.toml` to set your player name and any desired analysis settings, then provision KataGo:
 
 ```bash
 kiai setup
