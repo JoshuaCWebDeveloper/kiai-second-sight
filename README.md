@@ -26,83 +26,73 @@ The rendering is intentionally our own rather than GUI automation of KaTrain. Ka
 
 ## Install
 
-Python 3.11+ and Poetry are required. KataGo does **not** need to be installed separately by default.
+### Python via Pyenv
 
-If Poetry is not installed yet, one common installation method is:
+#### pyenv
 
-```bash
-pipx install poetry
-```
-
-### 1. Install Python 3.11 with pyenv and install the project
-
-Poetry manages the project's virtual environment and dependencies, while pyenv manages the Python interpreter itself. Install pyenv first if it is not already available:
+Run:
 
 ```bash
-curl -fsSL https://pyenv.run | bash
+export PYENV_GIT_TAG=v{{VERSION}} && curl -fsSL https://pyenv.run | bash
 ```
 
-The installer downloads pyenv but does not itself modify your shell startup files. The current official pyenv instructions provide a separate command that installs the recommended shell setup automatically:
+Run:
 
 ```bash
 ~/.pyenv/bin/pyenv init --install
 ```
 
-Then reload Bash so the PATH and shim changes take effect:
+Reload your shell or rerun your shell script.
 
-```bash
-source ~/.bashrc
-```
+#### Python
 
-This repository already commits the desired interpreter in `.python-version`. Install exactly that version rather than duplicating the version number in the setup instructions:
+**Dependencies:**
+
+- pyenv
+
+From inside the project root directory, run:
 
 ```bash
 pyenv install --skip-existing "$(pyenv local)"
-python --version
 ```
 
-Because `pyenv local` reads the committed `.python-version`, the version declaration stays in one place. `--skip-existing` makes this setup command safe to rerun: pyenv installs the requested interpreter only when it is missing. Once installed, pyenv automatically resolves Python commands in this repository through that local version; no `pyenv local <version>` write command is needed after cloning. Tell Poetry to build its virtual environment from the interpreter selected by pyenv:
+### Poetry w/ Pyenv
+
+**Dependencies:**
+
+- pyenv
+- Python
+
+From inside the project root directory, run:
 
 ```bash
-poetry env use "$(pyenv which python)"
+curl -sSL https://install.python-poetry.org | python3 - --version {{VERSION}}
 ```
 
-Then install the locked dependencies and the `kiai` command into that environment:
+and then:
 
 ```bash
-poetry install
-cp kiai.example.toml kiai.toml
+poetry env use python
 ```
 
-To activate the Poetry environment in the current shell:
+### Autoenv
 
-```bash
-eval "$(poetry env activate)"
-```
+Installing autoenv eliminates the need to run `eval "$(poetry env activate)"` every time you `cd`
+into the project.
 
-Once activated, normal shell commands resolve inside the project environment, so use `python`, `pytest`, `ruff`, and `kiai` directly rather than prefixing every command with `poetry run`.
+**Dependencies:**
 
-Leave the environment with:
+- Poetry
 
-```bash
-deactivate
-```
-
-### 2. Optional: install autoenv for automatic activation
-
-The repository includes `.autoenv` and `.autoenv.leave`. With [autoenv](https://github.com/hyperupcall/autoenv) configured as below, entering the repository activates the Poetry environment and leaving the repository deactivates it. Pyenv already selects the interpreter declared by `.python-version` whenever Python commands are resolved from this repository, so no additional `pyenv shell` override is needed.
-
-Install autoenv using the same setup documented in the JoshuaCWebDeveloper docs:
-
-```bash
-nvm use node
-```
+Run:
 
 ```bash
 curl -#fLo- 'https://raw.githubusercontent.com/hyperupcall/autoenv/master/scripts/install.sh' | sh
 ```
 
-The installer appends a line to `~/.bashrc` that sources `autoenv/activate.sh`. Add these variables to `~/.bashrc` immediately **before** that source line:
+The above command will append a line to your `~/.bashrc` file that sources
+`autoenv/activate.sh`. Add the following variables to your `~/.bashrc` file
+immediately _before_ the source line:
 
 ```bash
 AUTOENV_ENABLE_LEAVE=yes
@@ -110,15 +100,17 @@ AUTOENV_ENV_FILENAME=.autoenv
 AUTOENV_ENV_LEAVE_FILENAME=.autoenv.leave
 ```
 
-Reload your shell after editing `~/.bashrc`:
+### Project
+
+Once all above dependencies are installed, run:
 
 ```bash
-source ~/.bashrc
+eval "$(poetry env activate)"
+
+poetry install
 ```
 
-On the first visit to the repository, autoenv may ask you to authorize the checked-in environment files. The Poetry environment must already exist, so run `poetry install` once before relying on automatic activation.
-
-### 3. Configure and provision KataGo
+#### Configure and provision KataGo
 
 Edit `kiai.toml` for your player name and any desired analysis settings, then run:
 
