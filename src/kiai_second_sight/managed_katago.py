@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import io
+import json
 import os
 import platform
 import shutil
@@ -9,6 +10,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import time
 import urllib.request
 import zipfile
 from dataclasses import dataclass
@@ -20,10 +22,11 @@ KATAGO_VERSION_WINDOWS = "v1.18.1"
 KATAGO_VERSION_LINUX = "v1.15.3"
 MODEL_VERSION = "v1.12.4"
 MODEL_NAME = "b18c384nbt-uec.bin.gz"
-SUPPORTED_BACKENDS = {"eigen", "eigenavx2", "opencl"}
+SUPPORTED_BACKENDS = {"auto", "eigen", "eigenavx2", "opencl"}
+AUTO_BACKENDS = ("opencl", "eigenavx2", "eigen")
+THREAD_LAYOUTS = ((2, 16), (4, 4), (8, 2), (16, 1))
 UBUNTU_FOCAL_LIBZIP_URL = (
-    "https://archive.ubuntu.com/ubuntu/pool/universe/libz/libzip/"
-    "libzip5_1.5.1-0ubuntu1_amd64.deb"
+    "https://archive.ubuntu.com/ubuntu/pool/universe/libz/libzip/libzip5_1.5.1-0ubuntu1_amd64.deb"
 )
 
 
@@ -55,7 +58,9 @@ def resolve_katago(config: Config, *, install: bool = False) -> KataGoPaths:
             config=Path(config.analysis_config_path or "").expanduser(),
             managed=False,
         )
-        missing = [str(path) for path in (paths.executable, paths.model, paths.config) if not path.exists()]
+        missing = [
+            str(path) for path in (paths.executable, paths.model, paths.config) if not path.exists()
+        ]
         if missing:
             raise KataGoSetupError("Configured KataGo file(s) do not exist: " + ", ".join(missing))
         if install:
@@ -67,12 +72,13 @@ def resolve_katago(config: Config, *, install: bool = False) -> KataGoPaths:
 
 
 class ManagedKataGo:
-    def __init__(self, root: Path, backend: str = "eigen") -> None:
+    def __init__(self, root: Path, backend: str = "auto") -> None:
         self.root = Path(root).expanduser()
         self.backend = backend.lower()
 
     def require_installed(self) -> KataGoPaths:
-        paths = self._paths()
+        backend = self._selected_backend() if self.backend == "auto" else self.backend
+        paths = self._paths(backend)
         required = [paths.executable, paths.model, paths.config]
         if sys.platform.startswith("linux"):
             install_dir = paths.executable.parent
@@ -85,48 +91,225 @@ class ManagedKataGo:
             )
         return paths
 
-    def _paths(self) -> KataGoPaths:
+    def _selection_path(self) -> Path:
+        return self.root / "managed-selection.json"
+
+    def _selected_backend(self) -> str:
+        selection = self._selection_path()
+        if not selection.exists():
+            raise KataGoSetupError("KataGo setup has not been completed. Run 'kiai setup' first.")
+        try:
+            backend = str(json.loads(selection.read_text(encoding="utf-8"))["backend"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            raise KataGoSetupError(
+                "Managed KataGo selection is invalid. Run 'kiai setup' again."
+            ) from exc
+        if backend not in AUTO_BACKENDS:
+            raise KataGoSetupError("Managed KataGo selection is invalid. Run 'kiai setup' again.")
+        return backend
+
+    def _paths(self, backend: str | None = None) -> KataGoPaths:
+        backend = backend or self.backend
         version = self._katago_version()
-        install_dir = self.root / version / self.backend
+        install_dir = self.root / version / backend
         return KataGoPaths(
             executable=install_dir / ("katago.exe" if sys.platform == "win32" else "katago"),
             model=self.root / "models" / MODEL_NAME,
-            config=install_dir / "analysis_example.cfg",
+            config=install_dir / "kiai-analysis.cfg",
             managed=True,
         )
 
     def ensure(self) -> KataGoPaths:
         if self.backend not in SUPPORTED_BACKENDS:
             choices = ", ".join(sorted(SUPPORTED_BACKENDS))
-            raise KataGoSetupError(f"Unsupported managed backend {self.backend!r}; choose one of: {choices}")
+            raise KataGoSetupError(
+                f"Unsupported managed backend {self.backend!r}; choose one of: {choices}"
+            )
+        if self.backend == "auto":
+            return self._auto_setup()
+        paths = self._ensure_backend(self.backend)
+        layout, seconds = self._choose_thread_layout(paths)
+        self._write_optimized_config(paths, *layout)
+        self._validate_runtime(paths)
+        print(
+            f"Selected {self.backend} with {layout[0]} analysis x {layout[1]} search threads ({seconds:.2f}s benchmark)."
+        )
+        return paths
 
+    def _auto_setup(self) -> KataGoPaths:
+        working: list[tuple[float, str, KataGoPaths]] = []
+        errors: list[str] = []
+        print("Benchmarking managed KataGo backends...")
+        for backend in AUTO_BACKENDS:
+            try:
+                paths = self._ensure_backend(backend)
+                # Use a balanced batch-oriented layout for backend comparison. The winner is
+                # then tuned across several layouts below.
+                self._write_optimized_config(paths, 8, 2)
+                self._validate_runtime(paths)
+                self._benchmark(paths, warmup=True)
+                seconds = self._benchmark(paths)
+                print(f"  {backend:<9} {seconds:6.2f}s")
+                working.append((seconds, backend, paths))
+            except KataGoSetupError as exc:
+                print(f"  {backend:<9} unavailable: {str(exc).splitlines()[-1]}")
+                errors.append(f"{backend}: {exc}")
+        if not working:
+            raise KataGoSetupError("No managed KataGo backend could run.\n" + "\n".join(errors))
+        _, backend, paths = min(working, key=lambda item: item[0])
+        print(f"Fastest backend: {backend}")
+        layout, seconds = self._choose_thread_layout(paths)
+        self._write_optimized_config(paths, *layout)
+        self._validate_runtime(paths)
+        self._selection_path().parent.mkdir(parents=True, exist_ok=True)
+        self._selection_path().write_text(
+            json.dumps(
+                {
+                    "backend": backend,
+                    "analysis_threads": layout[0],
+                    "search_threads_per_analysis": layout[1],
+                    "benchmark_seconds": round(seconds, 4),
+                },
+                indent=2,
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        print(
+            f"Selected {backend} with {layout[0]} analysis x {layout[1]} search threads "
+            f"({seconds:.2f}s benchmark)."
+        )
+        return paths
+
+    def _ensure_backend(self, backend: str) -> KataGoPaths:
         version = self._katago_version()
-        asset = self._asset_name(version)
-        paths = self._paths()
+        old_backend = self.backend
+        self.backend = backend
+        try:
+            asset = self._asset_name(version)
+        finally:
+            self.backend = old_backend
+        paths = self._paths(backend)
         install_dir = paths.executable.parent
-        executable, config, model = paths.executable, paths.config, paths.model
-
-        if not executable.exists() or not config.exists():
-            print(f"Downloading managed KataGo {version} ({self.backend})...")
+        source_config = install_dir / "analysis_example.cfg"
+        if not paths.executable.exists() or not source_config.exists():
+            print(f"Downloading managed KataGo {version} ({backend})...")
             self._install_katago(version, asset, install_dir)
-        if not model.exists():
+        if not paths.model.exists():
             print(f"Downloading managed KataGo model {MODEL_NAME}...")
             self._download(
                 f"https://github.com/lightvector/KataGo/releases/download/{MODEL_VERSION}/{MODEL_NAME}",
-                model,
+                paths.model,
             )
-
-        if not executable.exists() or not config.exists() or not model.exists():
-            raise KataGoSetupError("Managed KataGo installation did not produce all required files")
-
         if sys.platform.startswith("linux"):
             self._ensure_linux_runtime_bundle(install_dir)
         elif sys.platform != "win32":
-            executable.chmod(executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
-
-        self._validate_runtime(paths)
+            paths.executable.chmod(
+                paths.executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            )
+        if not source_config.exists() or not paths.model.exists() or not paths.executable.exists():
+            raise KataGoSetupError("Managed KataGo installation did not produce all required files")
+        if not paths.config.exists():
+            self._write_optimized_config(paths, 8, 2)
         return paths
 
+    def _write_optimized_config(
+        self, paths: KataGoPaths, analysis_threads: int, search_threads: int
+    ) -> None:
+        source = paths.executable.parent / "analysis_example.cfg"
+        text = source.read_text(encoding="utf-8")
+        replacements = {
+            "numAnalysisThreads = 2": f"numAnalysisThreads = {analysis_threads}",
+            "numSearchThreadsPerAnalysisThread = 16": (
+                f"numSearchThreadsPerAnalysisThread = {search_threads}"
+            ),
+            "maxVisits = 500": "maxVisits = 500",
+        }
+        for old, new_value in replacements.items():
+            if old not in text:
+                raise KataGoSetupError(f"Expected KataGo config setting not found: {old}")
+            text = text.replace(old, new_value, 1)
+        paths.config.write_text(text, encoding="utf-8")
+
+    def _choose_thread_layout(self, paths: KataGoPaths) -> tuple[tuple[int, int], float]:
+        print("Benchmarking batch-analysis thread layouts...")
+        results: list[tuple[float, tuple[int, int]]] = []
+        for layout in THREAD_LAYOUTS:
+            self._write_optimized_config(paths, *layout)
+            seconds = self._benchmark(paths)
+            print(f"  {layout[0]:>2} analysis x {layout[1]:>2} search: {seconds:6.2f}s")
+            results.append((seconds, layout))
+        seconds, layout = min(results, key=lambda item: item[0])
+        return layout, seconds
+
+    @staticmethod
+    def _benchmark(paths: KataGoPaths, *, warmup: bool = False) -> float:
+        moves = [
+            ["B", "D4"],
+            ["W", "Q16"],
+            ["B", "Q4"],
+            ["W", "D16"],
+            ["B", "K10"],
+            ["W", "C10"],
+            ["B", "R10"],
+            ["W", "K3"],
+            ["B", "K17"],
+            ["W", "F6"],
+            ["B", "N14"],
+            ["W", "F14"],
+            ["B", "N6"],
+            ["W", "C3"],
+            ["B", "R17"],
+            ["W", "C17"],
+        ]
+        query = (
+            json.dumps(
+                {
+                    "id": "benchmark",
+                    "moves": moves,
+                    "rules": "tromp-taylor",
+                    "komi": 7.5,
+                    "boardXSize": 19,
+                    "boardYSize": 19,
+                    "analyzeTurns": list(range(16)),
+                    "includeOwnership": False,
+                    "maxVisits": 25 if not warmup else 5,
+                },
+                separators=(",", ":"),
+            )
+            + "\n"
+        )
+        started = time.perf_counter()
+        try:
+            result = subprocess.run(
+                [
+                    str(paths.executable),
+                    "analysis",
+                    "-model",
+                    str(paths.model),
+                    "-config",
+                    str(paths.config),
+                ],
+                input=query,
+                capture_output=True,
+                text=True,
+                timeout=180,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError) as exc:
+            raise KataGoSetupError(f"KataGo benchmark failed: {exc}") from exc
+        elapsed = time.perf_counter() - started
+        if result.returncode != 0:
+            detail = (
+                result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+            )
+            raise KataGoSetupError(f"KataGo benchmark failed: {detail}")
+        responses = [line for line in result.stdout.splitlines() if line.strip()]
+        if len(responses) < 16:
+            raise KataGoSetupError(
+                f"KataGo benchmark returned only {len(responses)} of 16 position results"
+            )
+        return elapsed
 
     def _ensure_linux_runtime_bundle(self, install_dir: Path) -> None:
         """Bundle focal's libzip5 beside KataGo so Ubuntu 20.04 needs no system package."""
@@ -194,7 +377,11 @@ class ManagedKataGo:
         lib_dir.mkdir(parents=True, exist_ok=True)
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:*") as archive:
             member = next(
-                (m for m in archive.getmembers() if m.isfile() and m.name.endswith("/libzip.so.5.0")),
+                (
+                    m
+                    for m in archive.getmembers()
+                    if m.isfile() and m.name.endswith("/libzip.so.5.0")
+                ),
                 None,
             )
             if member is None:
@@ -229,7 +416,9 @@ class ManagedKataGo:
         except (OSError, subprocess.SubprocessError) as exc:
             raise KataGoSetupError(f"KataGo runtime validation failed: {exc}") from exc
         if result.returncode != 0:
-            detail = result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+            detail = (
+                result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
+            )
             raise KataGoSetupError(
                 "KataGo setup validation failed while loading the analysis engine, model, or config. "
                 f"Runtime error: {detail}"
@@ -286,7 +475,10 @@ class ManagedKataGo:
         request = urllib.request.Request(url, headers={"User-Agent": "kiai-second-sight"})
         partial = destination.with_suffix(destination.suffix + ".part")
         try:
-            with urllib.request.urlopen(request, timeout=120) as response, partial.open("wb") as out:
+            with (
+                urllib.request.urlopen(request, timeout=120) as response,
+                partial.open("wb") as out,
+            ):
                 shutil.copyfileobj(response, out)
             os.replace(partial, destination)
         except Exception as exc:

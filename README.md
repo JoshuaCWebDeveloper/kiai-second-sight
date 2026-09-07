@@ -130,7 +130,7 @@ Edit `kiai.toml` to set your player name and any desired analysis settings, then
 kiai setup
 ```
 
-If no external KataGo paths are configured, `kiai setup` downloads a pinned KataGo runtime, analysis config, and neural-network model into `~/.kiai-second-sight/katago`. It launches the analysis engine with the downloaded model and config so setup verifies the complete managed runtime, not just that the KataGo executable starts. Downloads are cached and reused. The default managed backend is portable CPU `eigen`; `eigenavx2` and `opencl` can be selected in `kiai.toml`.
+If no external KataGo paths are configured, `kiai setup` downloads a pinned KataGo runtime, analysis config, and neural-network model into `~/.kiai-second-sight/katago`. It launches the analysis engine with the downloaded model and config so setup verifies the complete managed runtime, not just that the KataGo executable starts. Downloads are cached and reused. The default managed backend is `auto`: during `kiai setup`, Kiai tries OpenCL, Eigen AVX2, and Eigen, benchmarks every backend that can actually run, then keeps the fastest one. It also benchmarks several batch-analysis thread layouts and writes an optimized managed analysis config. Set `managed_backend` explicitly in `kiai.toml` to force a backend instead.
 On Linux, Kiai currently pins KataGo v1.15.3 because its prebuilt Linux binaries were built on Ubuntu 20.04. The managed model is the v1.12.4 `b18c384nbt-uec` network, which is compatible with KataGo v1.15.3; newer transformer models require KataGo v1.17+. Kiai also downloads and bundles Ubuntu 20.04's `libzip5` runtime alongside KataGo, so setup does not require installing `libzip5` system-wide. Newer KataGo Linux releases are built on Ubuntu 22.04 and require newer libraries such as OpenSSL 3. Windows uses the newer managed KataGo release.
 
 `kiai setup` is required before importing games. `kiai import` never downloads or installs KataGo resources; if the configured managed runtime is missing, it tells you to run setup first.
@@ -151,7 +151,8 @@ Or specify the color explicitly:
 kiai import path/to/game.sgf --me white
 ```
 
-Imports use a two-pass analysis. Kiai first screens all of your moves at a low visit count, using KataGo's searched child evaluation for the move you actually played when available and falling back to a cheap post-move search when necessary. Only plausible mistakes are then re-analyzed at the configured full `max_visits` depth. The final card filter always uses the full-depth before/after evaluations.
+Imports use a two-pass analysis. By default Kiai first screens all of your moves at 25 visits, using KataGo's searched child evaluation for the move you actually played when available and falling back to a cheap post-move search when necessary. Only plausible mistakes are then re-analyzed at the configured full `max_visits` depth (500 visits by default). The final card filter always uses the full-depth before/after evaluations.
+The defaults are 25 visits for screening and 500 visits for full analysis, matching KaTrain's 500-visit default analysis depth while keeping the screening pass lightweight.
 
 By default a card qualifies when:
 

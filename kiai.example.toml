@@ -4,8 +4,9 @@ names = ["your-ogs-name"]
 
 [analysis]
 # By default Second Sight downloads and manages KataGo, its analysis config, and a model.
-# The portable CPU backend is the default. You can also choose "eigenavx2" or "opencl".
-managed_backend = "eigen"
+# "auto" benchmarks OpenCL, Eigen AVX2, and Eigen during kiai setup and keeps the fastest working backend.
+# You can also force "opencl", "eigenavx2", or "eigen".
+managed_backend = "auto"
 # managed_root = "~/.kiai-second-sight/katago"
 
 # To use your own KataGo/KaTrain installation instead, configure ALL THREE paths below.
@@ -15,8 +16,8 @@ managed_backend = "eigen"
 # config_path = "C:/path/to/analysis_config.cfg"
 
 # Cheap whole-game screening pass. Only plausible mistakes are re-analyzed at max_visits.
-screening_visits = 75
-max_visits = 3000
+screening_visits = 25
+max_visits = 500
 
 [selection]
 # A card is created only when your pre-move win rate is strictly above this value...

@@ -90,3 +90,39 @@ def test_managed_model_is_compatible_with_linux_katago():
 
     assert MODEL_VERSION == "v1.12.4"
     assert MODEL_NAME == "b18c384nbt-uec.bin.gz"
+
+
+def test_auto_setup_selects_fastest_working_backend(monkeypatch, tmp_path: Path):
+    import json
+
+    from kiai_second_sight.managed_katago import KataGoPaths, ManagedKataGo
+
+    managed = ManagedKataGo(tmp_path, "auto")
+
+    def fake_paths(backend: str) -> KataGoPaths:
+        install = tmp_path / "v" / backend
+        install.mkdir(parents=True, exist_ok=True)
+        return KataGoPaths(
+            executable=install / "katago",
+            model=tmp_path / "model.bin.gz",
+            config=install / "kiai-analysis.cfg",
+            managed=True,
+        )
+
+    monkeypatch.setattr(managed, "_ensure_backend", fake_paths)
+    monkeypatch.setattr(managed, "_write_optimized_config", lambda *args: None)
+    monkeypatch.setattr(managed, "_validate_runtime", lambda *args: None)
+    timings = {"opencl": 1.0, "eigenavx2": 2.0, "eigen": 3.0}
+    monkeypatch.setattr(
+        managed,
+        "_benchmark",
+        lambda paths, warmup=False: 0.1 if warmup else timings[paths.executable.parent.name],
+    )
+    monkeypatch.setattr(managed, "_choose_thread_layout", lambda paths: ((8, 2), 0.8))
+
+    paths = managed.ensure()
+    assert paths.executable.parent.name == "opencl"
+    selection = json.loads((tmp_path / "managed-selection.json").read_text())
+    assert selection["backend"] == "opencl"
+    assert selection["analysis_threads"] == 8
+    assert selection["search_threads_per_analysis"] == 2
