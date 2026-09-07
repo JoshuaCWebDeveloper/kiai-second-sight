@@ -25,6 +25,18 @@ def _player(value: str) -> Color:
     return aliases[value]  # type: ignore[return-value]
 
 
+
+
+def _progress(label: str):
+    """Return a callback that renders position-level progress on one terminal line."""
+    def report(done: int, total: int) -> None:
+        percent = 100 if total == 0 else round(done * 100 / total)
+        print(f"\r{label}: {done}/{total} ({percent:3d}%)", end="", flush=True)
+        if done >= total:
+            print()
+
+    return report
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kiai", description="Kiai: Second Sight")
     parser.add_argument("--config", default="kiai.toml", help="Path to TOML config")
@@ -79,7 +91,10 @@ def import_game(args: argparse.Namespace) -> int:
         max_visits=cfg.screening_visits,
     ) as analyzer:
         screening = analyzer.analyze_game(
-            game, screening_before_turns, include_ownership=False
+            game,
+            screening_before_turns,
+            include_ownership=False,
+            on_progress=_progress("Screening pre-move positions"),
         )
 
         fallback_turns: set[int] = set()
@@ -102,7 +117,12 @@ def import_game(args: argparse.Namespace) -> int:
                 "was not searched from the previous position..."
             )
             screening.update(
-                analyzer.analyze_game(game, fallback_turns, include_ownership=False)
+                analyzer.analyze_game(
+                    game,
+                    fallback_turns,
+                    include_ownership=False,
+                    on_progress=_progress("Screening fallback post-move positions"),
+                )
             )
 
     candidate_moves = screening_candidates(
@@ -125,7 +145,11 @@ def import_game(args: argparse.Namespace) -> int:
             katago.config,
             max_visits=cfg.max_visits,
         ) as analyzer:
-            analyses = analyzer.analyze_game(game, deep_turns)
+            analyses = analyzer.analyze_game(
+                game,
+                deep_turns,
+                on_progress=_progress("Full candidate analysis"),
+            )
     else:
         analyses = {}
 

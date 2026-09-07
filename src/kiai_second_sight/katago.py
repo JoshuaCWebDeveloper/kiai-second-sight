@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import subprocess
 import threading
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 from typing import Any, Self
 
@@ -83,7 +83,12 @@ class KataGoAnalyzer:
         self._proc = None
 
     def analyze_game(
-        self, game: Game, turns: Iterable[int], *, include_ownership: bool = True
+        self,
+        game: Game,
+        turns: Iterable[int],
+        *,
+        include_ownership: bool = True,
+        on_progress: Callable[[int, int], None] | None = None,
     ) -> dict[int, PositionAnalysis]:
         turns = sorted({int(turn) for turn in turns})
         if not turns:
@@ -133,4 +138,6 @@ class KataGoAnalyzer:
                 move_infos=list(payload.get("moveInfos") or []),
                 ownership=payload.get("ownership"),
             )
+            if on_progress is not None:
+                on_progress(len(results), len(turns))
         return results
