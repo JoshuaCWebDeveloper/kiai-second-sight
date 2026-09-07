@@ -149,6 +149,10 @@ class ManagedKataGo:
                 # Use a balanced batch-oriented layout for backend comparison. The winner is
                 # then tuned across several layouts below.
                 self._write_optimized_config(paths, 8, 2)
+                if backend == "opencl":
+                    print(
+                        "  opencl    initializing (first run may spend several minutes tuning kernels)..."
+                    )
                 self._validate_runtime(paths)
                 seconds = self._benchmark(paths)
                 print(f"  {backend:<9} {seconds:6.2f}s")
@@ -401,10 +405,17 @@ class ManagedKataGo:
                 input=query,
                 capture_output=True,
                 text=True,
-                timeout=60,
+                timeout=600 if paths.executable.parent.name == "opencl" else 60,
                 check=False,
             )
-        except (OSError, subprocess.SubprocessError) as exc:
+        except subprocess.TimeoutExpired as exc:
+            if paths.executable.parent.name == "opencl":
+                raise KataGoSetupError(
+                    "OpenCL initialization did not finish within 10 minutes. KataGo may still be "
+                    "tuning kernels for this GPU/model, or the OpenCL runtime may be stalled."
+                ) from exc
+            raise KataGoSetupError(f"KataGo runtime validation failed: {exc}") from exc
+        except OSError as exc:
             raise KataGoSetupError(f"KataGo runtime validation failed: {exc}") from exc
         if result.returncode != 0:
             detail = (
