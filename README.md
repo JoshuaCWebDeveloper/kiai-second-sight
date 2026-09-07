@@ -130,12 +130,9 @@ Edit `kiai.toml` to set your player name and any desired analysis settings, then
 kiai setup
 ```
 
-If no external KataGo paths are configured, `kiai setup` downloads a pinned KataGo runtime, analysis config, and neural-network model into `~/.kiai-second-sight/katago`. It launches the analysis engine with the downloaded model and config so setup verifies the complete managed runtime, not just that the KataGo executable starts. Downloads are cached and reused. The default managed backend is `auto`: during `kiai setup`, Kiai tries OpenCL, Eigen AVX2, and Eigen, benchmarks every backend that can actually run, then keeps the fastest one. OpenCL may spend several minutes tuning itself the first time it is initialized for a particular GPU/model; that one-time tuning is separate from Kiai's short backend benchmark and is cached by KataGo for later runs. It also runs a deliberately tiny batch-analysis benchmark across several thread layouts and writes an optimized managed analysis config; the benchmark is designed to keep setup interactive rather than perform a full-strength analysis. Set `managed_backend` explicitly in `kiai.toml` to force a backend instead.
-On Linux, Kiai currently pins KataGo v1.15.3 because its prebuilt Linux binaries were built on Ubuntu 20.04. The managed model is the v1.12.4 `b18c384nbt-uec` network, which is compatible with KataGo v1.15.3; newer transformer models require KataGo v1.17+. Kiai also downloads and bundles Ubuntu 20.04's `libzip5` runtime alongside KataGo, so setup does not require installing `libzip5` system-wide. Newer KataGo Linux releases are built on Ubuntu 22.04 and require newer libraries such as OpenSSL 3. Windows uses the newer managed KataGo release.
+`kiai setup` provisions and validates a managed KataGo installation, choosing the fastest working backend automatically. Run it once before importing games; downloads and OpenCL tuning are cached for later runs.
 
-`kiai setup` is required before importing games. `kiai import` never downloads or installs KataGo resources; if the configured managed runtime is missing, it tells you to run setup first.
-
-To reuse an existing KataGo or KaTrain installation, set **all three** of `katago_path`, `model_path`, and `config_path` under `[analysis]`. A complete external configuration takes precedence and suppresses managed downloads. The equivalent environment variables are `KIAI_KATAGO_PATH`, `KIAI_KATAGO_MODEL`, and `KIAI_KATAGO_CONFIG`. The analysis config must report win rates as BLACK.
+You can also point Kiai at an existing KataGo or KaTrain installation. See [KataGo setup and configuration](docs/katago.md) for managed-runtime details, external paths, backend selection, and Linux compatibility notes.
 
 ## Use
 
