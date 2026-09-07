@@ -392,28 +392,28 @@ class ManagedKataGo:
     def _validate_runtime(paths: KataGoPaths) -> None:
         """Launch the analysis engine so setup validates the executable, model, and config together."""
         query = '{"id":"setup","action":"query_version"}\n'
+        command = [
+            str(paths.executable),
+            "analysis",
+            "-model",
+            str(paths.model),
+            "-config",
+            str(paths.config),
+        ]
+        is_opencl = paths.executable.parent.name == "opencl"
         try:
-            result = subprocess.run(
-                [
-                    str(paths.executable),
-                    "analysis",
-                    "-model",
-                    str(paths.model),
-                    "-config",
-                    str(paths.config),
-                ],
-                input=query,
-                capture_output=True,
-                text=True,
-                timeout=600 if paths.executable.parent.name == "opencl" else 60,
-                check=False,
-            )
+            if is_opencl:
+                result = ManagedKataGo._run_opencl_validation_with_progress(command, query)
+            else:
+                result = subprocess.run(
+                    command,
+                    input=query,
+                    capture_output=True,
+                    text=True,
+                    timeout=60,
+                    check=False,
+                )
         except subprocess.TimeoutExpired as exc:
-            if paths.executable.parent.name == "opencl":
-                raise KataGoSetupError(
-                    "OpenCL initialization did not finish within 10 minutes. KataGo may still be "
-                    "tuning kernels for this GPU/model, or the OpenCL runtime may be stalled."
-                ) from exc
             raise KataGoSetupError(f"KataGo runtime validation failed: {exc}") from exc
         except OSError as exc:
             raise KataGoSetupError(f"KataGo runtime validation failed: {exc}") from exc
@@ -425,6 +425,50 @@ class ManagedKataGo:
                 "KataGo setup validation failed while loading the analysis engine, model, or config. "
                 f"Runtime error: {detail}"
             )
+
+    @staticmethod
+    def _run_opencl_validation_with_progress(
+        command: list[str], query: str
+    ) -> subprocess.CompletedProcess[str]:
+        """Wait for one-time OpenCL tuning while showing elapsed progress."""
+        timeout_seconds = 600
+        progress_interval = 5
+        started = time.monotonic()
+        proc = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            first = True
+            while True:
+                elapsed = time.monotonic() - started
+                remaining = timeout_seconds - elapsed
+                if remaining <= 0:
+                    proc.kill()
+                    stdout, stderr = proc.communicate()
+                    raise KataGoSetupError(
+                        "OpenCL initialization did not finish within 10 minutes. KataGo may still "
+                        "be tuning kernels for this GPU/model, or the OpenCL runtime may be stalled. "
+                        f"Last output: {(stderr or stdout).strip()[-1000:]}"
+                    )
+                try:
+                    stdout, stderr = proc.communicate(
+                        input=query if first else None,
+                        timeout=min(progress_interval, remaining),
+                    )
+                    break
+                except subprocess.TimeoutExpired:
+                    first = False
+                    elapsed = int(time.monotonic() - started)
+                    print(f"    OpenCL tuning/initialization: {elapsed}s elapsed...")
+            return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+        finally:
+            if proc.poll() is None:
+                proc.kill()
+                proc.communicate()
 
     def _katago_version(self) -> str:
         if sys.platform.startswith("linux"):
