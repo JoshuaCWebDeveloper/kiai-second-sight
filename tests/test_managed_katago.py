@@ -112,7 +112,7 @@ def test_auto_setup_selects_fastest_working_backend(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(managed, "_ensure_backend", fake_paths)
     monkeypatch.setattr(managed, "_write_optimized_config", lambda *args: None)
     monkeypatch.setattr(managed, "_validate_runtime", lambda *args: None)
-    timings = {"opencl": 1.0, "eigenavx2": 2.0}
+    timings = {"source-opencl": 0.5, "opencl": 1.0, "eigenavx2": 2.0}
     monkeypatch.setattr(
         managed,
         "_benchmark",
@@ -125,8 +125,41 @@ def test_auto_setup_selects_fastest_working_backend(monkeypatch, tmp_path: Path)
     )
 
     paths = managed.ensure()
-    assert paths.executable.parent.name == "opencl"
+    assert paths.executable.parent.name == "source-opencl"
     selection = json.loads((tmp_path / "managed-selection.json").read_text())
-    assert selection["backend"] == "opencl"
+    assert selection["backend"] == "source-opencl"
     assert selection["analysis_threads"] == 8
     assert selection["search_threads_per_analysis"] == 2
+
+
+def test_source_opencl_paths_use_modern_engine_and_model(monkeypatch, tmp_path: Path):
+    from kiai_second_sight.managed_katago import (
+        KATAGO_SOURCE_VERSION,
+        MODERN_MODEL_NAME,
+        MODERN_MODEL_VERSION,
+        ManagedKataGo,
+    )
+
+    monkeypatch.setattr("kiai_second_sight.managed_katago.sys.platform", "linux")
+    managed = ManagedKataGo(tmp_path, "source-opencl")
+    paths = managed._paths("source-opencl")
+
+    assert KATAGO_SOURCE_VERSION == "v1.18.1"
+    assert MODERN_MODEL_VERSION == "v1.17.1"
+    assert KATAGO_SOURCE_VERSION in str(paths.executable)
+    assert paths.executable.parent.name == "source-opencl"
+    assert paths.model.name == MODERN_MODEL_NAME
+
+
+def test_source_opencl_does_not_require_legacy_libzip_wrapper(monkeypatch, tmp_path: Path):
+    from kiai_second_sight.managed_katago import ManagedKataGo
+
+    monkeypatch.setattr("kiai_second_sight.managed_katago.sys.platform", "linux")
+    managed = ManagedKataGo(tmp_path, "source-opencl")
+    paths = managed._paths("source-opencl")
+    paths.executable.parent.mkdir(parents=True, exist_ok=True)
+    for path in (paths.executable, paths.model, paths.config):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("x")
+
+    assert managed.require_installed() == paths

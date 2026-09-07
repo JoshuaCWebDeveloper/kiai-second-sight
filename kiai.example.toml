@@ -4,8 +4,8 @@ names = ["your-ogs-name"]
 
 [analysis]
 # By default Second Sight downloads and manages KataGo, its analysis config, and a model.
-# "auto" benchmarks OpenCL, Eigen AVX2, and Eigen during kiai setup and keeps the fastest working backend.
-# You can also force "opencl", "eigenavx2", or "eigen".
+# "auto" can build current KataGo OpenCL from source, then benchmarks working accelerated runtimes.
+# You can also force "source-opencl", "opencl", "eigenavx2", or "eigen".
 managed_backend = "auto"
 # managed_root = "~/.kiai-second-sight/katago"
 

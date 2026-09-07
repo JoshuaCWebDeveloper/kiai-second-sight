@@ -148,8 +148,7 @@ Or specify the color explicitly:
 kiai import path/to/game.sgf --me white
 ```
 
-Imports use a two-pass analysis. By default Kiai first screens all of your moves at 25 visits, using KataGo's searched child evaluation for the move you actually played when available and falling back to a cheap post-move search when necessary. Only plausible mistakes are then re-analyzed at the configured full `max_visits` depth (500 visits by default). The final card filter always uses the full-depth before/after evaluations.
-The defaults are 25 visits for screening and 500 visits for full analysis, matching KaTrain's 500-visit default analysis depth while keeping the screening pass lightweight.
+Kiai analyzes the game, finds qualifying mistakes, and generates study cards automatically. Analysis depth is configurable in `kiai.toml`.
 
 By default a card qualifies when:
 

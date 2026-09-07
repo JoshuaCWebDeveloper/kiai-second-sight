@@ -5,6 +5,7 @@ import json
 import os
 import platform
 import queue
+import re
 import shutil
 import stat
 import subprocess
@@ -22,11 +23,16 @@ from .config import Config
 
 KATAGO_VERSION_WINDOWS = "v1.18.1"
 KATAGO_VERSION_LINUX = "v1.15.3"
+KATAGO_SOURCE_VERSION = "v1.18.1"
 MODEL_VERSION = "v1.12.4"
 MODEL_NAME = "b18c384nbt-uec.bin.gz"
-SUPPORTED_BACKENDS = {"auto", "eigen", "eigenavx2", "opencl"}
-AUTO_BACKENDS = ("opencl", "eigenavx2", "eigen")
-AUTO_BENCHMARK_BACKENDS = ("opencl", "eigenavx2")
+MODERN_MODEL_VERSION = "v1.17.1"
+MODERN_MODEL_NAME = "b10c384h6nbttflrs.bin.gz"
+CMAKE_VERSION = "3.31.12"
+OPENCL_HEADERS_VERSION = "v2024.10.24"
+SUPPORTED_BACKENDS = {"auto", "source-opencl", "eigen", "eigenavx2", "opencl"}
+AUTO_BACKENDS = ("source-opencl", "opencl", "eigenavx2", "eigen")
+AUTO_BENCHMARK_BACKENDS = ("source-opencl", "opencl", "eigenavx2")
 THREAD_LAYOUTS = ((4, 4), (8, 2), (16, 1))
 BENCHMARK_TURNS = (0, 1)
 BENCHMARK_VISITS = 3
@@ -86,7 +92,7 @@ class ManagedKataGo:
         backend = self._selected_backend() if self.backend == "auto" else self.backend
         paths = self._paths(backend)
         required = [paths.executable, paths.model, paths.config]
-        if sys.platform.startswith("linux"):
+        if sys.platform.startswith("linux") and backend != "source-opencl":
             install_dir = paths.executable.parent
             required.extend([install_dir / "katago.real", install_dir / "lib" / "libzip.so.5"])
         missing = [str(path) for path in required if not path.exists()]
@@ -116,11 +122,13 @@ class ManagedKataGo:
 
     def _paths(self, backend: str | None = None) -> KataGoPaths:
         backend = backend or self.backend
-        version = self._katago_version()
+        source_build = backend == "source-opencl"
+        version = KATAGO_SOURCE_VERSION if source_build else self._katago_version()
+        model_name = MODERN_MODEL_NAME if source_build else MODEL_NAME
         install_dir = self.root / version / backend
         return KataGoPaths(
             executable=install_dir / ("katago.exe" if sys.platform == "win32" else "katago"),
-            model=self.root / "models" / MODEL_NAME,
+            model=self.root / "models" / model_name,
             config=install_dir / "kiai-analysis.cfg",
             managed=True,
         )
@@ -147,15 +155,17 @@ class ManagedKataGo:
         errors: list[str] = []
         print("Benchmarking managed KataGo backends...")
 
-        # OpenCL and AVX2 are the performance candidates. Plain Eigen is a
-        # compatibility fallback if AVX2 cannot run, not a useful benchmark target.
+        # Prefer a current KataGo source build when the local Linux toolchain can build it,
+        # then compare against the compatible prebuilt OpenCL and AVX2 runtimes. Plain
+        # Eigen remains a compatibility fallback rather than a useful benchmark target.
         for backend in AUTO_BENCHMARK_BACKENDS:
             try:
                 paths = self._ensure_backend(backend)
                 self._write_optimized_config(paths, 8, 2)
-                if backend == "opencl":
+                if self._is_opencl_backend(backend):
                     print(
-                        "  opencl    initializing (first run may spend several minutes tuning kernels)..."
+                        f"  {backend:<12} initializing "
+                        "(first run may spend several minutes tuning kernels)..."
                     )
                     self._validate_runtime(paths)
                 seconds = self._benchmark(paths)
@@ -207,6 +217,9 @@ class ManagedKataGo:
         return paths
 
     def _ensure_backend(self, backend: str) -> KataGoPaths:
+        if backend == "source-opencl":
+            return self._ensure_source_opencl()
+
         version = self._katago_version()
         old_backend = self.backend
         self.backend = backend
@@ -238,22 +251,174 @@ class ManagedKataGo:
             self._write_optimized_config(paths, 8, 2)
         return paths
 
+    def _ensure_source_opencl(self) -> KataGoPaths:
+        """Build current KataGo OpenCL from source against the local Linux runtime."""
+        if not sys.platform.startswith("linux"):
+            raise KataGoSetupError("source-opencl is currently supported only on Linux")
+        if platform.machine().lower() not in {"x86_64", "amd64"}:
+            raise KataGoSetupError("source-opencl currently supports x86-64 Linux only")
+
+        paths = self._paths("source-opencl")
+        install_dir = paths.executable.parent
+        source_root = self.root / "sources" / f"KataGo-{KATAGO_SOURCE_VERSION.lstrip('v')}"
+        cpp_root = source_root / "cpp"
+        source_config = cpp_root / "configs" / "analysis_example.cfg"
+
+        if not paths.executable.exists() or not source_config.exists():
+            print(f"Building managed KataGo {KATAGO_SOURCE_VERSION} (OpenCL) from source...")
+            self._ensure_katago_source(source_root)
+            cmake = self._ensure_cmake()
+            opencl_headers = self._ensure_opencl_headers()
+            opencl_library = self._find_opencl_library()
+            if opencl_library is None:
+                raise KataGoSetupError(
+                    "OpenCL runtime library was not found. Install an OpenCL ICD/runtime first."
+                )
+            if not Path("/usr/include/zlib.h").exists():
+                raise KataGoSetupError(
+                    "KataGo source build requires zlib development headers (Ubuntu: zlib1g-dev)."
+                )
+
+            build_dir = cpp_root / "build-kiai-opencl"
+            build_dir.mkdir(parents=True, exist_ok=True)
+            configure = [
+                str(cmake),
+                "-S",
+                str(cpp_root),
+                "-B",
+                str(build_dir),
+                "-DUSE_BACKEND=OPENCL",
+                "-DNO_GIT_REVISION=1",
+                "-DCMAKE_BUILD_TYPE=Release",
+                f"-DOpenCL_INCLUDE_DIR={opencl_headers}",
+                f"-DOpenCL_LIBRARY={opencl_library}",
+            ]
+            self._run_streaming(configure, "KataGo source configuration")
+            jobs = max(1, min(os.cpu_count() or 1, 8))
+            self._run_streaming(
+                [str(cmake), "--build", str(build_dir), "--parallel", str(jobs)],
+                "KataGo source build",
+            )
+            built = build_dir / "katago"
+            if not built.exists():
+                raise KataGoSetupError("KataGo source build completed without producing katago")
+            install_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(built, paths.executable)
+            paths.executable.chmod(
+                paths.executable.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH
+            )
+            shutil.copy2(source_config, install_dir / "analysis_example.cfg")
+
+        if not paths.model.exists():
+            print(f"Downloading managed KataGo model {MODERN_MODEL_NAME}...")
+            self._download(
+                f"https://github.com/lightvector/KataGo/releases/download/"
+                f"{MODERN_MODEL_VERSION}/{MODERN_MODEL_NAME}",
+                paths.model,
+            )
+        if not paths.config.exists():
+            self._write_optimized_config(paths, 8, 2)
+        return paths
+
+    def _ensure_katago_source(self, source_root: Path) -> None:
+        if (source_root / "cpp" / "CMakeLists.txt").exists():
+            return
+        archive = self.root / "sources" / f"KataGo-{KATAGO_SOURCE_VERSION}.tar.gz"
+        if not archive.exists():
+            print(f"Downloading KataGo {KATAGO_SOURCE_VERSION} source...")
+            self._download(
+                f"https://github.com/lightvector/KataGo/archive/refs/tags/"
+                f"{KATAGO_SOURCE_VERSION}.tar.gz",
+                archive,
+            )
+        source_root.parent.mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive, "r:gz") as tf:
+            tf.extractall(source_root.parent)
+        if not (source_root / "cpp" / "CMakeLists.txt").exists():
+            raise KataGoSetupError("Downloaded KataGo source archive did not extract as expected")
+
+    def _ensure_cmake(self) -> Path:
+        tool_root = self.root / "tools" / f"cmake-{CMAKE_VERSION}-linux-x86_64"
+        executable = tool_root / "bin" / "cmake"
+        if executable.exists():
+            return executable
+        archive = self.root / "tools" / f"cmake-{CMAKE_VERSION}-linux-x86_64.tar.gz"
+        print(f"Downloading managed CMake {CMAKE_VERSION} for KataGo source builds...")
+        self._download(
+            f"https://github.com/Kitware/CMake/releases/download/v{CMAKE_VERSION}/"
+            f"cmake-{CMAKE_VERSION}-linux-x86_64.tar.gz",
+            archive,
+        )
+        self.root.joinpath("tools").mkdir(parents=True, exist_ok=True)
+        with tarfile.open(archive, "r:gz") as tf:
+            tf.extractall(self.root / "tools")
+        if not executable.exists():
+            raise KataGoSetupError("Managed CMake archive did not extract as expected")
+        return executable
+
+    def _ensure_opencl_headers(self) -> Path:
+        system_headers = Path("/usr/include/CL/cl.h")
+        if system_headers.exists():
+            return system_headers.parent.parent
+        version = OPENCL_HEADERS_VERSION
+        root = self.root / "tools" / f"OpenCL-Headers-{version.lstrip('v')}"
+        if not (root / "CL" / "cl.h").exists():
+            archive = self.root / "tools" / f"OpenCL-Headers-{version}.tar.gz"
+            print("Downloading managed OpenCL headers for KataGo source build...")
+            self._download(
+                f"https://github.com/KhronosGroup/OpenCL-Headers/archive/refs/tags/{version}.tar.gz",
+                archive,
+            )
+            with tarfile.open(archive, "r:gz") as tf:
+                tf.extractall(self.root / "tools")
+        if not (root / "CL" / "cl.h").exists():
+            raise KataGoSetupError("Managed OpenCL headers did not extract as expected")
+        return root
+
+    @staticmethod
+    def _find_opencl_library() -> Path | None:
+        candidates = [
+            Path("/usr/lib/x86_64-linux-gnu/libOpenCL.so"),
+            Path("/usr/lib/x86_64-linux-gnu/libOpenCL.so.1"),
+            Path("/usr/lib64/libOpenCL.so"),
+            Path("/usr/lib64/libOpenCL.so.1"),
+            Path("/usr/lib/libOpenCL.so"),
+            Path("/usr/lib/libOpenCL.so.1"),
+        ]
+        return next((path for path in candidates if path.exists()), None)
+
+    @staticmethod
+    def _run_streaming(command: list[str], label: str) -> None:
+        print(f"{label}...")
+        try:
+            result = subprocess.run(command, check=False)
+        except OSError as exc:
+            raise KataGoSetupError(f"{label} failed to start: {exc}") from exc
+        if result.returncode != 0:
+            raise KataGoSetupError(f"{label} failed with exit code {result.returncode}")
+
+    @staticmethod
+    def _is_opencl_backend(backend: str) -> bool:
+        return backend in {"opencl", "source-opencl"}
+
     def _write_optimized_config(
         self, paths: KataGoPaths, analysis_threads: int, search_threads: int
     ) -> None:
         source = paths.executable.parent / "analysis_example.cfg"
         text = source.read_text(encoding="utf-8")
-        replacements = {
-            "numAnalysisThreads = 2": f"numAnalysisThreads = {analysis_threads}",
-            "numSearchThreadsPerAnalysisThread = 16": (
-                f"numSearchThreadsPerAnalysisThread = {search_threads}"
-            ),
-            "maxVisits = 500": "maxVisits = 500",
+        settings = {
+            "numAnalysisThreads": analysis_threads,
+            "numSearchThreadsPerAnalysisThread": search_threads,
+            "maxVisits": 500,
         }
-        for old, new_value in replacements.items():
-            if old not in text:
-                raise KataGoSetupError(f"Expected KataGo config setting not found: {old}")
-            text = text.replace(old, new_value, 1)
+        for name, value in settings.items():
+            pattern = rf"(?m)^(\s*{re.escape(name)}\s*=\s*)[^#\n]+"
+            text, count = re.subn(pattern, rf"\g<1>{value}", text, count=1)
+            if count == 0 and name == "numSearchThreadsPerAnalysisThread":
+                alias = r"(?m)^(\s*numSearchThreads\s*=\s*)[^#\n]+"
+                text, count = re.subn(alias, rf"\g<1>{value}", text, count=1)
+            if count == 0:
+                raise KataGoSetupError(f"Expected KataGo config setting not found: {name}")
         paths.config.write_text(text, encoding="utf-8")
 
     def _choose_thread_layout(
@@ -480,7 +645,7 @@ class ManagedKataGo:
             "-config",
             str(paths.config),
         ]
-        is_opencl = paths.executable.parent.name == "opencl"
+        is_opencl = ManagedKataGo._is_opencl_backend(paths.executable.parent.name)
         try:
             if is_opencl:
                 result = ManagedKataGo._run_opencl_validation_with_progress(command, query)

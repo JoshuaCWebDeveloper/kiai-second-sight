@@ -12,9 +12,11 @@ before importing games.
 
 By default, Kiai manages KataGo under `~/.kiai-second-sight/katago`. Setup downloads the required runtime, analysis config, and neural-network model, validates that they work together, and caches them for later runs.
 
-With `managed_backend = "auto"`, setup tests the available accelerated backends and keeps the fastest working option. OpenCL may perform a one-time device/model tuning pass on first use; KataGo caches those tuning results. Kiai also benchmarks a few batch-analysis thread layouts and writes the selected layout into its managed analysis config.
+With `managed_backend = "auto"`, setup includes a current OpenCL build from source as a managed strategy, then benchmarks the accelerated runtimes that work on the machine and keeps the fastest one. OpenCL may perform a one-time device/model tuning pass on first use; KataGo caches those tuning results. Kiai also benchmarks a few batch-analysis thread layouts and writes the selected layout into its managed analysis config.
 
-You can force a backend with `managed_backend` in `kiai.toml`. Supported values are `auto`, `opencl`, `eigenavx2`, and `eigen`.
+On Linux, the `source-opencl` strategy builds KataGo v1.18.1 locally against the host OpenCL runtime and uses the `b10c384h6nbttflrs` transformer model—the same model configured by KaTrain 1.20.0. Kiai supplies its own recent CMake and OpenCL headers when needed; the host still needs a C++ compiler, zlib development headers, and a working OpenCL runtime. The resulting binary and build inputs are cached under the managed KataGo directory.
+
+You can force a backend/strategy with `managed_backend` in `kiai.toml`. Supported values are `auto`, `source-opencl`, `opencl`, `eigenavx2`, and `eigen`.
 
 ## External KataGo or KaTrain installation
 
@@ -38,9 +40,7 @@ The analysis config must report win rates as Black so Kiai can normalize them to
 
 ## Current Linux compatibility
 
-The managed Linux runtime currently uses KataGo v1.15.3 with the `b18c384nbt-uec` model because that prebuilt release is compatible with Ubuntu 20.04. Kiai bundles the required `libzip5` runtime alongside KataGo instead of requiring it system-wide.
-
-Newer KataGo Linux binaries target newer Ubuntu environments, and newer transformer models require a newer KataGo engine. A future managed-runtime update can replace this compatibility stack with a newer engine built specifically for Ubuntu 20.04 rather than relying on the newer prebuilt binaries.
+Kiai retains the Ubuntu-20.04-compatible KataGo v1.15.3 prebuilt runtime with the `b18c384nbt-uec` model as a fallback. The source-build strategy avoids that compatibility pin by compiling KataGo v1.18.1 on the local Linux system and can therefore use the newer transformer model.
 
 ## Import behavior
 
