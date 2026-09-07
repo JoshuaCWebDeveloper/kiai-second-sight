@@ -4,12 +4,14 @@ import io
 import json
 import os
 import platform
+import queue
 import shutil
 import stat
 import subprocess
 import sys
 import tarfile
 import tempfile
+import threading
 import time
 import urllib.request
 import zipfile
@@ -430,45 +432,76 @@ class ManagedKataGo:
     def _run_opencl_validation_with_progress(
         command: list[str], query: str
     ) -> subprocess.CompletedProcess[str]:
-        """Wait for one-time OpenCL tuning while showing elapsed progress."""
+        """Stream KataGo's actual OpenCL tuner stages and config counts during first-run tuning."""
         timeout_seconds = 600
-        progress_interval = 5
-        started = time.monotonic()
         proc = subprocess.Popen(
             command,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             text=True,
+            bufsize=1,
         )
+        assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+        proc.stdin.write(query)
+        proc.stdin.close()
+
+        stderr_lines: list[str] = []
+        stdout_lines: list[str] = []
+        events: queue.Queue[str | None] = queue.Queue()
+
+        def drain_stderr() -> None:
+            for raw in proc.stderr:
+                line = raw.rstrip()
+                stderr_lines.append(line)
+                events.put(line)
+            events.put(None)
+
+        def drain_stdout() -> None:
+            stdout_lines.extend(line.rstrip() for line in proc.stdout)
+
+        stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+        stdout_thread = threading.Thread(target=drain_stdout, daemon=True)
+        stderr_thread.start()
+        stdout_thread.start()
+
+        deadline = time.monotonic() + timeout_seconds
+        stderr_done = False
         try:
-            first = True
-            while True:
-                elapsed = time.monotonic() - started
-                remaining = timeout_seconds - elapsed
-                if remaining <= 0:
+            while proc.poll() is None or not stderr_done:
+                if time.monotonic() >= deadline:
                     proc.kill()
-                    stdout, stderr = proc.communicate()
+                    proc.wait()
+                    detail = "\n".join(stderr_lines[-20:])
                     raise KataGoSetupError(
-                        "OpenCL initialization did not finish within 10 minutes. KataGo may still "
-                        "be tuning kernels for this GPU/model, or the OpenCL runtime may be stalled. "
-                        f"Last output: {(stderr or stdout).strip()[-1000:]}"
+                        "OpenCL initialization did not finish within 10 minutes. "
+                        f"Last tuner output:\n{detail}"
                     )
                 try:
-                    stdout, stderr = proc.communicate(
-                        input=query if first else None,
-                        timeout=min(progress_interval, remaining),
-                    )
-                    break
-                except subprocess.TimeoutExpired:
-                    first = False
-                    elapsed = int(time.monotonic() - started)
-                    print(f"    OpenCL tuning/initialization: {elapsed}s elapsed...")
-            return subprocess.CompletedProcess(command, proc.returncode, stdout, stderr)
+                    line = events.get(timeout=0.2)
+                except queue.Empty:
+                    continue
+                if line is None:
+                    stderr_done = True
+                    continue
+                if line:
+                    # KataGo itself reports the device, tuning stage, number of candidate
+                    # configs, and progress such as `Tuning 20/183 ...`. KaTrain surfaces
+                    # this same engine output; do the same here rather than synthesizing it.
+                    print(f"    {line}", flush=True)
+
+            stderr_thread.join(timeout=1)
+            stdout_thread.join(timeout=1)
+            return subprocess.CompletedProcess(
+                command,
+                proc.returncode,
+                "\n".join(stdout_lines),
+                "\n".join(stderr_lines),
+            )
         finally:
             if proc.poll() is None:
                 proc.kill()
-                proc.communicate()
+                proc.wait()
 
     def _katago_version(self) -> str:
         if sys.platform.startswith("linux"):
