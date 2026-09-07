@@ -280,7 +280,7 @@ class ManagedKataGo:
 
     @staticmethod
     def _benchmark(paths: KataGoPaths) -> float:
-        """Run a deliberately tiny throughput sample suitable for interactive setup."""
+        """Measure analysis throughput without counting engine/model startup time."""
         moves = [["B", "D4"], ["W", "Q16"]]
         query = (
             json.dumps(
@@ -299,42 +299,92 @@ class ManagedKataGo:
             )
             + "\n"
         )
-        started = time.perf_counter()
+        command = [
+            str(paths.executable),
+            "analysis",
+            "-model",
+            str(paths.model),
+            "-config",
+            str(paths.config),
+        ]
+        proc = subprocess.Popen(
+            command,
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        assert proc.stdin is not None and proc.stdout is not None and proc.stderr is not None
+
+        stderr_lines: list[str] = []
+        ready = threading.Event()
+        stdout_events: queue.Queue[str | None] = queue.Queue()
+
+        def drain_stderr() -> None:
+            for raw in proc.stderr:
+                line = raw.rstrip()
+                stderr_lines.append(line)
+                if "Started, ready to begin handling requests" in line:
+                    ready.set()
+
+        def drain_stdout() -> None:
+            for raw in proc.stdout:
+                stdout_events.put(raw.rstrip())
+            stdout_events.put(None)
+
+        stderr_thread = threading.Thread(target=drain_stderr, daemon=True)
+        stdout_thread = threading.Thread(target=drain_stdout, daemon=True)
+        stderr_thread.start()
+        stdout_thread.start()
         try:
-            result = subprocess.run(
-                [
-                    str(paths.executable),
-                    "analysis",
-                    "-model",
-                    str(paths.model),
-                    "-config",
-                    str(paths.config),
-                ],
-                input=query,
-                capture_output=True,
-                text=True,
-                timeout=BENCHMARK_TIMEOUT_SECONDS,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:
-            raise KataGoSetupError(
-                f"KataGo quick benchmark exceeded {BENCHMARK_TIMEOUT_SECONDS}s"
-            ) from exc
+            if not ready.wait(BENCHMARK_TIMEOUT_SECONDS):
+                proc.kill()
+                proc.wait()
+                detail = stderr_lines[-1] if stderr_lines else "engine did not become ready"
+                raise KataGoSetupError(
+                    f"KataGo benchmark startup exceeded {BENCHMARK_TIMEOUT_SECONDS}s: {detail}"
+                )
+
+            # Start the clock only once KataGo has loaded the model/backend and declared itself
+            # ready. This keeps OpenCL's larger initialization cost from being mistaken for slow
+            # analysis throughput.
+            started = time.perf_counter()
+            proc.stdin.write(query)
+            proc.stdin.flush()
+
+            responses: list[str] = []
+            deadline = time.monotonic() + BENCHMARK_TIMEOUT_SECONDS
+            while len(responses) < len(BENCHMARK_TURNS):
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise KataGoSetupError(
+                        f"KataGo quick benchmark analysis exceeded {BENCHMARK_TIMEOUT_SECONDS}s"
+                    )
+                try:
+                    line = stdout_events.get(timeout=remaining)
+                except queue.Empty as exc:
+                    raise KataGoSetupError(
+                        f"KataGo quick benchmark analysis exceeded {BENCHMARK_TIMEOUT_SECONDS}s"
+                    ) from exc
+                if line is None:
+                    detail = stderr_lines[-1] if stderr_lines else f"exit code {proc.returncode}"
+                    raise KataGoSetupError(f"KataGo benchmark failed: {detail}")
+                responses.append(line)
+
+            return time.perf_counter() - started
         except OSError as exc:
             raise KataGoSetupError(f"KataGo benchmark failed: {exc}") from exc
-        elapsed = time.perf_counter() - started
-        if result.returncode != 0:
-            detail = (
-                result.stderr.strip() or result.stdout.strip() or f"exit code {result.returncode}"
-            )
-            raise KataGoSetupError(f"KataGo benchmark failed: {detail}")
-        responses = [line for line in result.stdout.splitlines() if line.strip()]
-        if len(responses) < len(BENCHMARK_TURNS):
-            raise KataGoSetupError(
-                f"KataGo benchmark returned only {len(responses)} of "
-                f"{len(BENCHMARK_TURNS)} position results"
-            )
-        return elapsed
+        finally:
+            if proc.poll() is None:
+                proc.terminate()
+                try:
+                    proc.wait(timeout=2)
+                except subprocess.TimeoutExpired:
+                    proc.kill()
+                    proc.wait()
+            stderr_thread.join(timeout=1)
+            stdout_thread.join(timeout=1)
 
     def _ensure_linux_runtime_bundle(self, install_dir: Path) -> None:
         """Bundle focal's libzip5 beside KataGo so Ubuntu 20.04 needs no system package."""
