@@ -92,7 +92,7 @@ def test_managed_model_is_compatible_with_linux_katago():
     assert MODEL_NAME == "b18c384nbt-uec.bin.gz"
 
 
-def test_auto_setup_selects_fastest_working_backend(monkeypatch, tmp_path: Path):
+def test_auto_setup_prefers_current_source_runtime(monkeypatch, tmp_path: Path):
     import json
 
     from kiai_second_sight.managed_katago import KataGoPaths, ManagedKataGo
@@ -112,7 +112,7 @@ def test_auto_setup_selects_fastest_working_backend(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(managed, "_ensure_backend", fake_paths)
     monkeypatch.setattr(managed, "_write_optimized_config", lambda *args: None)
     monkeypatch.setattr(managed, "_validate_runtime", lambda *args: None)
-    timings = {"source-opencl": 0.5, "opencl": 1.0, "eigenavx2": 2.0}
+    timings = {"source-opencl": 2.0, "opencl": 0.5, "eigenavx2": 1.0}
     monkeypatch.setattr(
         managed,
         "_benchmark",
@@ -130,6 +130,42 @@ def test_auto_setup_selects_fastest_working_backend(monkeypatch, tmp_path: Path)
     assert selection["backend"] == "source-opencl"
     assert selection["analysis_threads"] == 8
     assert selection["search_threads_per_analysis"] == 2
+
+
+def test_auto_setup_falls_back_when_source_runtime_unavailable(monkeypatch, tmp_path: Path):
+    import json
+
+    from kiai_second_sight.managed_katago import KataGoPaths, KataGoSetupError, ManagedKataGo
+
+    managed = ManagedKataGo(tmp_path, "auto")
+
+    def fake_ensure(backend: str) -> KataGoPaths:
+        if backend == "source-opencl":
+            raise KataGoSetupError("source build unavailable")
+        install = tmp_path / "v" / backend
+        install.mkdir(parents=True, exist_ok=True)
+        return KataGoPaths(
+            executable=install / "katago",
+            model=tmp_path / "model.bin.gz",
+            config=install / "kiai-analysis.cfg",
+            managed=True,
+        )
+
+    monkeypatch.setattr(managed, "_ensure_backend", fake_ensure)
+    monkeypatch.setattr(managed, "_write_optimized_config", lambda *args: None)
+    monkeypatch.setattr(managed, "_validate_runtime", lambda *args: None)
+    timings = {"opencl": 0.5, "eigenavx2": 1.0}
+    monkeypatch.setattr(managed, "_benchmark", lambda paths: timings[paths.executable.parent.name])
+    monkeypatch.setattr(
+        managed,
+        "_choose_thread_layout",
+        lambda paths, baseline=None: ((8, 2), 0.4),
+    )
+
+    paths = managed.ensure()
+    assert paths.executable.parent.name == "opencl"
+    selection = json.loads((tmp_path / "managed-selection.json").read_text())
+    assert selection["backend"] == "opencl"
 
 
 def test_source_opencl_paths_use_modern_engine_and_model(monkeypatch, tmp_path: Path):

@@ -151,49 +151,70 @@ class ManagedKataGo:
         return paths
 
     def _auto_setup(self) -> KataGoPaths:
-        working: list[tuple[float, str, KataGoPaths]] = []
         errors: list[str] = []
-        print("Benchmarking managed KataGo backends...")
+        print("Selecting managed KataGo runtime...")
 
-        # Prefer a current KataGo source build when the local Linux toolchain can build it,
-        # then compare against the compatible prebuilt OpenCL and AVX2 runtimes. Plain
-        # Eigen remains a compatibility fallback rather than a useful benchmark target.
-        for backend in AUTO_BENCHMARK_BACKENDS:
-            try:
-                paths = self._ensure_backend(backend)
-                self._write_optimized_config(paths, 8, 2)
-                if self._is_opencl_backend(backend):
-                    print(
-                        f"  {backend:<12} initializing "
-                        "(first run may spend several minutes tuning kernels)..."
-                    )
-                    self._validate_runtime(paths)
-                seconds = self._benchmark(paths)
-                print(f"  {backend:<9} {seconds:6.2f}s")
-                working.append((seconds, backend, paths))
-            except KataGoSetupError as exc:
-                print(f"  {backend:<9} unavailable: {str(exc).splitlines()[-1]}")
-                errors.append(f"{backend}: {exc}")
-
-        if working:
-            baseline_seconds, backend, paths = min(working, key=lambda item: item[0])
-            print(f"Fastest backend: {backend}")
+        # Prefer the current source-built OpenCL runtime. It uses the current engine/model
+        # stack, so do not compare it against legacy runtimes using a tiny speed benchmark
+        # and accidentally downgrade solely because the older model is a few milliseconds
+        # faster. Legacy runtimes are compatibility fallbacks.
+        try:
+            backend = "source-opencl"
+            paths = self._ensure_backend(backend)
+            self._write_optimized_config(paths, 8, 2)
+            print(
+                f"  {backend:<12} initializing "
+                "(first run may spend several minutes tuning kernels)..."
+            )
+            self._validate_runtime(paths)
+            baseline_seconds = self._benchmark(paths)
+            print(f"  {backend:<12} {baseline_seconds:6.2f}s")
+            print(f"Using current managed runtime: {backend}")
             layout, seconds = self._choose_thread_layout(paths, baseline=((8, 2), baseline_seconds))
-        else:
-            try:
-                backend = "eigen"
-                paths = self._ensure_backend(backend)
-                self._write_optimized_config(paths, 8, 2)
-                baseline_seconds = self._benchmark(paths)
-                print(f"  {backend:<9} {baseline_seconds:6.2f}s (fallback)")
+        except KataGoSetupError as exc:
+            print(f"  source-opencl unavailable: {str(exc).splitlines()[-1]}")
+            errors.append(f"source-opencl: {exc}")
+
+            working: list[tuple[float, str, KataGoPaths]] = []
+            print("Benchmarking compatible fallback runtimes...")
+            for backend in ("opencl", "eigenavx2"):
+                try:
+                    paths = self._ensure_backend(backend)
+                    self._write_optimized_config(paths, 8, 2)
+                    if self._is_opencl_backend(backend):
+                        print(
+                            f"  {backend:<12} initializing "
+                            "(first run may spend several minutes tuning kernels)..."
+                        )
+                        self._validate_runtime(paths)
+                    candidate_seconds = self._benchmark(paths)
+                    print(f"  {backend:<12} {candidate_seconds:6.2f}s")
+                    working.append((candidate_seconds, backend, paths))
+                except KataGoSetupError as fallback_exc:
+                    print(f"  {backend:<12} unavailable: {str(fallback_exc).splitlines()[-1]}")
+                    errors.append(f"{backend}: {fallback_exc}")
+
+            if working:
+                baseline_seconds, backend, paths = min(working, key=lambda item: item[0])
+                print(f"Fastest compatible fallback: {backend}")
                 layout, seconds = self._choose_thread_layout(
                     paths, baseline=((8, 2), baseline_seconds)
                 )
-            except KataGoSetupError as exc:
-                errors.append(f"eigen: {exc}")
-                raise KataGoSetupError(
-                    "No managed KataGo backend could run.\n" + "\n".join(errors)
-                ) from exc
+            else:
+                try:
+                    backend = "eigen"
+                    paths = self._ensure_backend(backend)
+                    self._write_optimized_config(paths, 8, 2)
+                    baseline_seconds = self._benchmark(paths)
+                    print(f"  {backend:<12} {baseline_seconds:6.2f}s (fallback)")
+                    layout, seconds = self._choose_thread_layout(
+                        paths, baseline=((8, 2), baseline_seconds)
+                    )
+                except KataGoSetupError as fallback_exc:
+                    errors.append(f"eigen: {fallback_exc}")
+                    raise KataGoSetupError(
+                        "No managed KataGo runtime could run.\n" + "\n".join(errors)
+                    ) from fallback_exc
 
         self._write_optimized_config(paths, *layout)
         self._selection_path().parent.mkdir(parents=True, exist_ok=True)

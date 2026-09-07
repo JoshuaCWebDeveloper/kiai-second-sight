@@ -12,7 +12,7 @@ before importing games.
 
 By default, Kiai manages KataGo under `~/.kiai-second-sight/katago`. Setup downloads the required runtime, analysis config, and neural-network model, validates that they work together, and caches them for later runs.
 
-With `managed_backend = "auto"`, setup includes a current OpenCL build from source as a managed strategy, then benchmarks the accelerated runtimes that work on the machine and keeps the fastest one. OpenCL may perform a one-time device/model tuning pass on first use; KataGo caches those tuning results. Kiai also benchmarks a few batch-analysis thread layouts and writes the selected layout into its managed analysis config.
+With `managed_backend = "auto"`, setup prefers the current OpenCL build from source and falls back to compatible prebuilt runtimes only if the source build cannot run. OpenCL may perform a one-time device/model tuning pass on first use; KataGo caches those tuning results. Kiai also benchmarks a few batch-analysis thread layouts and writes the selected layout into its managed analysis config.
 
 On Linux, the `source-opencl` strategy builds KataGo v1.18.1 locally against the host OpenCL runtime and uses the `b10c384h6nbttflrs` transformer model—the same model configured by KaTrain 1.20.0. Kiai supplies its own recent CMake and OpenCL headers when needed; the host still needs a C++ compiler, zlib development headers, and a working OpenCL runtime. The resulting binary and build inputs are cached under the managed KataGo directory.
 
