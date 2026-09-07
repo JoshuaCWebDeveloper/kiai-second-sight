@@ -14,6 +14,8 @@ managed_backend = "eigen"
 # model_path = "C:/path/to/model.bin.gz"
 # config_path = "C:/path/to/analysis_config.cfg"
 
+# Cheap whole-game screening pass. Only plausible mistakes are re-analyzed at max_visits.
+screening_visits = 75
 max_visits = 3000
 
 [selection]
@@ -21,6 +23,9 @@ max_visits = 3000
 min_start_winrate = 0.50
 # ...and your move loses at least this many absolute win-rate points.
 min_loss_pp = 0.10
+# Screening is intentionally generous so low-visit noise does not hide borderline mistakes.
+screening_start_margin = 0.05
+screening_loss_margin = 0.05
 
 [render]
 top_moves = 5

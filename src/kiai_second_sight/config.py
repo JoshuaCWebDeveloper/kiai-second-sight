@@ -17,6 +17,9 @@ class Config:
         default_factory=lambda: Path.home() / ".kiai-second-sight" / "katago"
     )
     max_visits: int = 3000
+    screening_visits: int = 75
+    screening_start_margin: float = 0.05
+    screening_loss_margin: float = 0.05
     min_start_winrate: float = 0.50
     min_loss_pp: float = 0.10
     top_moves: int = 5
@@ -43,6 +46,9 @@ def load_config(path: str | Path | None) -> Config:
         os.getenv("KIAI_KATAGO_HOME", analysis.get("managed_root", cfg.managed_root))
     ).expanduser()
     cfg.max_visits = int(analysis.get("max_visits", cfg.max_visits))
+    cfg.screening_visits = int(analysis.get("screening_visits", cfg.screening_visits))
+    cfg.screening_start_margin = float(selection.get("screening_start_margin", cfg.screening_start_margin))
+    cfg.screening_loss_margin = float(selection.get("screening_loss_margin", cfg.screening_loss_margin))
     cfg.min_start_winrate = float(selection.get("min_start_winrate", cfg.min_start_winrate))
     cfg.min_loss_pp = float(selection.get("min_loss_pp", cfg.min_loss_pp))
     cfg.top_moves = int(render.get("top_moves", cfg.top_moves))

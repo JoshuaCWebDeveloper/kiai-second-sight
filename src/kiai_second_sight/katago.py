@@ -82,7 +82,9 @@ class KataGoAnalyzer:
             proc.wait(timeout=5)
         self._proc = None
 
-    def analyze_game(self, game: Game, turns: Iterable[int]) -> dict[int, PositionAnalysis]:
+    def analyze_game(
+        self, game: Game, turns: Iterable[int], *, include_ownership: bool = True
+    ) -> dict[int, PositionAnalysis]:
         turns = sorted({int(turn) for turn in turns})
         if not turns:
             return {}
@@ -104,7 +106,7 @@ class KataGoAnalyzer:
             "boardXSize": game.board_size,
             "boardYSize": game.board_size,
             "analyzeTurns": turns,
-            "includeOwnership": True,
+            "includeOwnership": include_ownership,
             "maxVisits": self.max_visits,
         }
         self._proc.stdin.write(json.dumps(query, separators=(",", ":")) + "\n")

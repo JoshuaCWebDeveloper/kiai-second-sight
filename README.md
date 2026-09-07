@@ -151,7 +151,7 @@ Or specify the color explicitly:
 kiai import path/to/game.sgf --me white
 ```
 
-The command analyzes every position immediately before and after one of your moves. For move `M`, it compares KataGo's evaluation at turns `M-1` and `M`.
+Imports use a two-pass analysis. Kiai first screens all of your moves at a low visit count, using KataGo's searched child evaluation for the move you actually played when available and falling back to a cheap post-move search when necessary. Only plausible mistakes are then re-analyzed at the configured full `max_visits` depth. The final card filter always uses the full-depth before/after evaluations.
 
 By default a card qualifies when:
 

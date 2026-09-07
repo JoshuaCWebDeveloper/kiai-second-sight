@@ -6,12 +6,13 @@ from pathlib import Path
 
 from .board import board_at_turn
 from .config import load_config
+from .coords import point_to_gtp
 from .katago import KataGoAnalyzer
 from .managed_katago import KataGoSetupError, resolve_katago
 from .manifest import upsert_cards
 from .models import Color
 from .render import BoardRenderer
-from .selector import select_cards
+from .selector import played_move_analysis, screening_candidates, select_cards
 from .sgf_loader import infer_player_color, load_game
 from .slideshow import rebuild_slideshow
 
@@ -54,12 +55,11 @@ def import_game(args: argparse.Namespace) -> int:
         )
 
     player_moves = [move for move in game.moves if move.color == player]
-    turns = {turn for move in player_moves for turn in (move.number - 1, move.number)}
+    screening_before_turns = {move.number - 1 for move in player_moves}
     print(
         f"Loaded {game.path.name}: {game.black_name or '?'} vs {game.white_name or '?'}; "
         f"you are {'Black' if player == 'B' else 'White'}."
     )
-    print(f"Analyzing {len(turns)} positions around {len(player_moves)} of your moves...")
 
     try:
         katago = resolve_katago(cfg)
@@ -67,14 +67,67 @@ def import_game(args: argparse.Namespace) -> int:
         raise SystemExit(str(exc)) from exc
     source = "managed" if katago.managed else "configured external"
     print(f"Using {source} KataGo: {katago.executable}")
+    print(
+        f"Screening {len(player_moves)} of your moves at {cfg.screening_visits} visits "
+        f"({len(screening_before_turns)} pre-move positions)..."
+    )
 
     with KataGoAnalyzer(
         katago.executable,
         katago.model,
         katago.config,
-        max_visits=cfg.max_visits,
+        max_visits=cfg.screening_visits,
     ) as analyzer:
-        analyses = analyzer.analyze_game(game, turns)
+        screening = analyzer.analyze_game(
+            game, screening_before_turns, include_ownership=False
+        )
+
+        fallback_turns: set[int] = set()
+        for move in player_moves:
+            before = screening.get(move.number - 1)
+            if before is None:
+                fallback_turns.add(move.number)
+                continue
+            estimate = played_move_analysis(
+                before, point_to_gtp(move.point, game.board_size), move.number
+            )
+            if estimate is None:
+                fallback_turns.add(move.number)
+            else:
+                screening[move.number] = estimate
+
+        if fallback_turns:
+            print(
+                f"Screening {len(fallback_turns)} post-move position(s) whose played move "
+                "was not searched from the previous position..."
+            )
+            screening.update(
+                analyzer.analyze_game(game, fallback_turns, include_ownership=False)
+            )
+
+    candidate_moves = screening_candidates(
+        game,
+        player,
+        screening,
+        min_start_winrate=cfg.min_start_winrate,
+        min_loss_pp=cfg.min_loss_pp,
+        start_margin=cfg.screening_start_margin,
+        loss_margin=cfg.screening_loss_margin,
+    )
+    print(f"Screening retained {len(candidate_moves)} move(s) for full analysis.")
+
+    if candidate_moves:
+        deep_turns = {turn for move_number in candidate_moves for turn in (move_number - 1, move_number)}
+        print(f"Analyzing {len(deep_turns)} candidate positions at {cfg.max_visits} visits...")
+        with KataGoAnalyzer(
+            katago.executable,
+            katago.model,
+            katago.config,
+            max_visits=cfg.max_visits,
+        ) as analyzer:
+            analyses = analyzer.analyze_game(game, deep_turns)
+    else:
+        analyses = {}
 
     cards = select_cards(
         game,
