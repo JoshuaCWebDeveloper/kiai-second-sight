@@ -112,13 +112,17 @@ def test_auto_setup_selects_fastest_working_backend(monkeypatch, tmp_path: Path)
     monkeypatch.setattr(managed, "_ensure_backend", fake_paths)
     monkeypatch.setattr(managed, "_write_optimized_config", lambda *args: None)
     monkeypatch.setattr(managed, "_validate_runtime", lambda *args: None)
-    timings = {"opencl": 1.0, "eigenavx2": 2.0, "eigen": 3.0}
+    timings = {"opencl": 1.0, "eigenavx2": 2.0}
     monkeypatch.setattr(
         managed,
         "_benchmark",
-        lambda paths, warmup=False: 0.1 if warmup else timings[paths.executable.parent.name],
+        lambda paths: timings[paths.executable.parent.name],
     )
-    monkeypatch.setattr(managed, "_choose_thread_layout", lambda paths: ((8, 2), 0.8))
+    monkeypatch.setattr(
+        managed,
+        "_choose_thread_layout",
+        lambda paths, baseline=None: ((8, 2), 0.8),
+    )
 
     paths = managed.ensure()
     assert paths.executable.parent.name == "opencl"

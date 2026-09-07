@@ -26,10 +26,11 @@ MODEL_VERSION = "v1.12.4"
 MODEL_NAME = "b18c384nbt-uec.bin.gz"
 SUPPORTED_BACKENDS = {"auto", "eigen", "eigenavx2", "opencl"}
 AUTO_BACKENDS = ("opencl", "eigenavx2", "eigen")
+AUTO_BENCHMARK_BACKENDS = ("opencl", "eigenavx2")
 THREAD_LAYOUTS = ((4, 4), (8, 2), (16, 1))
 BENCHMARK_TURNS = (0, 1)
 BENCHMARK_VISITS = 3
-BENCHMARK_TIMEOUT_SECONDS = 12
+BENCHMARK_TIMEOUT_SECONDS = 30
 UBUNTU_FOCAL_LIBZIP_URL = (
     "https://archive.ubuntu.com/ubuntu/pool/universe/libz/libzip/libzip5_1.5.1-0ubuntu1_amd64.deb"
 )
@@ -145,30 +146,46 @@ class ManagedKataGo:
         working: list[tuple[float, str, KataGoPaths]] = []
         errors: list[str] = []
         print("Benchmarking managed KataGo backends...")
-        for backend in AUTO_BACKENDS:
+
+        # OpenCL and AVX2 are the performance candidates. Plain Eigen is a
+        # compatibility fallback if AVX2 cannot run, not a useful benchmark target.
+        for backend in AUTO_BENCHMARK_BACKENDS:
             try:
                 paths = self._ensure_backend(backend)
-                # Use a balanced batch-oriented layout for backend comparison. The winner is
-                # then tuned across several layouts below.
                 self._write_optimized_config(paths, 8, 2)
                 if backend == "opencl":
                     print(
                         "  opencl    initializing (first run may spend several minutes tuning kernels)..."
                     )
-                self._validate_runtime(paths)
+                    self._validate_runtime(paths)
                 seconds = self._benchmark(paths)
                 print(f"  {backend:<9} {seconds:6.2f}s")
                 working.append((seconds, backend, paths))
             except KataGoSetupError as exc:
                 print(f"  {backend:<9} unavailable: {str(exc).splitlines()[-1]}")
                 errors.append(f"{backend}: {exc}")
-        if not working:
-            raise KataGoSetupError("No managed KataGo backend could run.\n" + "\n".join(errors))
-        _, backend, paths = min(working, key=lambda item: item[0])
-        print(f"Fastest backend: {backend}")
-        layout, seconds = self._choose_thread_layout(paths)
+
+        if working:
+            baseline_seconds, backend, paths = min(working, key=lambda item: item[0])
+            print(f"Fastest backend: {backend}")
+            layout, seconds = self._choose_thread_layout(paths, baseline=((8, 2), baseline_seconds))
+        else:
+            try:
+                backend = "eigen"
+                paths = self._ensure_backend(backend)
+                self._write_optimized_config(paths, 8, 2)
+                baseline_seconds = self._benchmark(paths)
+                print(f"  {backend:<9} {baseline_seconds:6.2f}s (fallback)")
+                layout, seconds = self._choose_thread_layout(
+                    paths, baseline=((8, 2), baseline_seconds)
+                )
+            except KataGoSetupError as exc:
+                errors.append(f"eigen: {exc}")
+                raise KataGoSetupError(
+                    "No managed KataGo backend could run.\n" + "\n".join(errors)
+                ) from exc
+
         self._write_optimized_config(paths, *layout)
-        self._validate_runtime(paths)
         self._selection_path().parent.mkdir(parents=True, exist_ok=True)
         self._selection_path().write_text(
             json.dumps(
@@ -239,10 +256,21 @@ class ManagedKataGo:
             text = text.replace(old, new_value, 1)
         paths.config.write_text(text, encoding="utf-8")
 
-    def _choose_thread_layout(self, paths: KataGoPaths) -> tuple[tuple[int, int], float]:
+    def _choose_thread_layout(
+        self,
+        paths: KataGoPaths,
+        *,
+        baseline: tuple[tuple[int, int], float] | None = None,
+    ) -> tuple[tuple[int, int], float]:
         print("Benchmarking batch-analysis thread layouts...")
         results: list[tuple[float, tuple[int, int]]] = []
+        if baseline is not None:
+            layout, seconds = baseline
+            results.append((seconds, layout))
+            print(f"  {layout[0]:>2} analysis x {layout[1]:>2} search: {seconds:6.2f}s (reused)")
         for layout in THREAD_LAYOUTS:
+            if baseline is not None and layout == baseline[0]:
+                continue
             self._write_optimized_config(paths, *layout)
             seconds = self._benchmark(paths)
             print(f"  {layout[0]:>2} analysis x {layout[1]:>2} search: {seconds:6.2f}s")
