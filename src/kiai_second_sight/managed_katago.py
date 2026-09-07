@@ -24,7 +24,10 @@ MODEL_VERSION = "v1.12.4"
 MODEL_NAME = "b18c384nbt-uec.bin.gz"
 SUPPORTED_BACKENDS = {"auto", "eigen", "eigenavx2", "opencl"}
 AUTO_BACKENDS = ("opencl", "eigenavx2", "eigen")
-THREAD_LAYOUTS = ((2, 16), (4, 4), (8, 2), (16, 1))
+THREAD_LAYOUTS = ((4, 4), (8, 2), (16, 1))
+BENCHMARK_TURNS = (0, 1)
+BENCHMARK_VISITS = 3
+BENCHMARK_TIMEOUT_SECONDS = 12
 UBUNTU_FOCAL_LIBZIP_URL = (
     "https://archive.ubuntu.com/ubuntu/pool/universe/libz/libzip/libzip5_1.5.1-0ubuntu1_amd64.deb"
 )
@@ -147,7 +150,6 @@ class ManagedKataGo:
                 # then tuned across several layouts below.
                 self._write_optimized_config(paths, 8, 2)
                 self._validate_runtime(paths)
-                self._benchmark(paths, warmup=True)
                 seconds = self._benchmark(paths)
                 print(f"  {backend:<9} {seconds:6.2f}s")
                 working.append((seconds, backend, paths))
@@ -243,25 +245,9 @@ class ManagedKataGo:
         return layout, seconds
 
     @staticmethod
-    def _benchmark(paths: KataGoPaths, *, warmup: bool = False) -> float:
-        moves = [
-            ["B", "D4"],
-            ["W", "Q16"],
-            ["B", "Q4"],
-            ["W", "D16"],
-            ["B", "K10"],
-            ["W", "C10"],
-            ["B", "R10"],
-            ["W", "K3"],
-            ["B", "K17"],
-            ["W", "F6"],
-            ["B", "N14"],
-            ["W", "F14"],
-            ["B", "N6"],
-            ["W", "C3"],
-            ["B", "R17"],
-            ["W", "C17"],
-        ]
+    def _benchmark(paths: KataGoPaths) -> float:
+        """Run a deliberately tiny throughput sample suitable for interactive setup."""
+        moves = [["B", "D4"], ["W", "Q16"]]
         query = (
             json.dumps(
                 {
@@ -271,9 +257,9 @@ class ManagedKataGo:
                     "komi": 7.5,
                     "boardXSize": 19,
                     "boardYSize": 19,
-                    "analyzeTurns": list(range(16)),
+                    "analyzeTurns": list(BENCHMARK_TURNS),
                     "includeOwnership": False,
-                    "maxVisits": 25 if not warmup else 5,
+                    "maxVisits": BENCHMARK_VISITS,
                 },
                 separators=(",", ":"),
             )
@@ -293,10 +279,14 @@ class ManagedKataGo:
                 input=query,
                 capture_output=True,
                 text=True,
-                timeout=180,
+                timeout=BENCHMARK_TIMEOUT_SECONDS,
                 check=False,
             )
-        except (OSError, subprocess.SubprocessError) as exc:
+        except subprocess.TimeoutExpired as exc:
+            raise KataGoSetupError(
+                f"KataGo quick benchmark exceeded {BENCHMARK_TIMEOUT_SECONDS}s"
+            ) from exc
+        except OSError as exc:
             raise KataGoSetupError(f"KataGo benchmark failed: {exc}") from exc
         elapsed = time.perf_counter() - started
         if result.returncode != 0:
@@ -305,9 +295,10 @@ class ManagedKataGo:
             )
             raise KataGoSetupError(f"KataGo benchmark failed: {detail}")
         responses = [line for line in result.stdout.splitlines() if line.strip()]
-        if len(responses) < 16:
+        if len(responses) < len(BENCHMARK_TURNS):
             raise KataGoSetupError(
-                f"KataGo benchmark returned only {len(responses)} of 16 position results"
+                f"KataGo benchmark returned only {len(responses)} of "
+                f"{len(BENCHMARK_TURNS)} position results"
             )
         return elapsed
 
