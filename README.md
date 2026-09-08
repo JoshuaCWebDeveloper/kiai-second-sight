@@ -140,6 +140,7 @@ If your name is configured under `[player].names`:
 
 ```bash
 kiai import path/to/game.sgf
+kiai import path/to/sgf-directory
 ```
 
 Or specify the color explicitly:

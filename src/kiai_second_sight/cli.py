@@ -25,10 +25,9 @@ def _player(value: str) -> Color:
     return aliases[value]  # type: ignore[return-value]
 
 
-
-
 def _progress(label: str):
     """Return a callback that renders position-level progress on one terminal line."""
+
     def report(done: int, total: int) -> None:
         percent = 100 if total == 0 else round(done * 100 / total)
         print(f"\r{label}: {done}/{total} ({percent:3d}%)", end="", flush=True)
@@ -37,15 +36,22 @@ def _progress(label: str):
 
     return report
 
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="kiai", description="Kiai: Second Sight")
     parser.add_argument("--config", default="kiai.toml", help="Path to TOML config")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    imp = sub.add_parser("import", help="Analyze an SGF and add qualifying study cards")
-    imp.add_argument("sgf", type=Path)
-    imp.add_argument("--me", type=_player, help="Your color; inferred from configured names if omitted")
-    imp.add_argument("--dry-run", action="store_true", help="Analyze/select only; do not render or update deck")
+    imp = sub.add_parser(
+        "import", help="Analyze an SGF file or directory and add qualifying study cards"
+    )
+    imp.add_argument("sgf", type=Path, help="SGF file or directory containing SGF files")
+    imp.add_argument(
+        "--me", type=_player, help="Your color; inferred from configured names if omitted"
+    )
+    imp.add_argument(
+        "--dry-run", action="store_true", help="Analyze/select only; do not render or update deck"
+    )
 
     sub.add_parser("setup", help="Download/verify the configured KataGo runtime")
 
@@ -55,14 +61,34 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _sgf_inputs(path: Path) -> list[Path]:
+    """Return one SGF file or the SGF files directly contained in a directory."""
+    if path.is_file():
+        if path.suffix.lower() != ".sgf":
+            raise SystemExit(f"Input file is not an SGF: {path}")
+        return [path]
+    if path.is_dir():
+        files = sorted(
+            (
+                entry
+                for entry in path.iterdir()
+                if entry.is_file() and entry.suffix.lower() == ".sgf"
+            ),
+            key=lambda entry: entry.name.lower(),
+        )
+        if not files:
+            raise SystemExit(f"No SGF files found in directory: {path}")
+        return files
+    raise SystemExit(f"SGF input does not exist: {path}")
 
-def import_game(args: argparse.Namespace) -> int:
-    cfg = load_config(args.config)
-    game = load_game(args.sgf)
+
+def _analyze_game(sgf_path: Path, args: argparse.Namespace, cfg, katago):
+    game = load_game(sgf_path)
     player = args.me or infer_player_color(game, cfg.player_names)
     if player is None:
         raise SystemExit(
-            f"Could not infer your color (PB={game.black_name!r}, PW={game.white_name!r}). "
+            f"Could not infer your color for {game.path.name} "
+            f"(PB={game.black_name!r}, PW={game.white_name!r}). "
             "Use --me black/white or configure [player].names."
         )
 
@@ -72,13 +98,6 @@ def import_game(args: argparse.Namespace) -> int:
         f"Loaded {game.path.name}: {game.black_name or '?'} vs {game.white_name or '?'}; "
         f"you are {'Black' if player == 'B' else 'White'}."
     )
-
-    try:
-        katago = resolve_katago(cfg)
-    except KataGoSetupError as exc:
-        raise SystemExit(str(exc)) from exc
-    source = "managed" if katago.managed else "configured external"
-    print(f"Using {source} KataGo: {katago.executable}")
     print(
         f"Screening {len(player_moves)} of your moves at {cfg.screening_visits} visits "
         f"({len(screening_before_turns)} pre-move positions)..."
@@ -137,7 +156,9 @@ def import_game(args: argparse.Namespace) -> int:
     print(f"Screening retained {len(candidate_moves)} move(s) for full analysis.")
 
     if candidate_moves:
-        deep_turns = {turn for move_number in candidate_moves for turn in (move_number - 1, move_number)}
+        deep_turns = {
+            turn for move_number in candidate_moves for turn in (move_number - 1, move_number)
+        }
         print(f"Analyzing {len(deep_turns)} candidate positions at {cfg.max_visits} visits...")
         with KataGoAnalyzer(
             katago.executable,
@@ -164,34 +185,65 @@ def import_game(args: argparse.Namespace) -> int:
     for card in cards:
         print(
             f"  Move {card.move_number:>3} {card.played_move:>4}: "
-            f"{card.winrate_before*100:5.1f}% → {card.winrate_after*100:5.1f}% "
-            f"(-{card.loss_pp*100:.1f} pp)"
+            f"{card.winrate_before * 100:5.1f}% → {card.winrate_after * 100:5.1f}% "
+            f"(-{card.loss_pp * 100:.1f} pp)"
         )
+    return game, cards
 
-    if args.dry_run:
-        print(json.dumps([{"move": c.move_number, "loss_pp": c.loss_pp} for c in cards], indent=2))
-        return 0
+
+def import_game(args: argparse.Namespace) -> int:
+    cfg = load_config(args.config)
+    sgf_files = _sgf_inputs(args.sgf)
+
+    try:
+        katago = resolve_katago(cfg)
+    except KataGoSetupError as exc:
+        raise SystemExit(str(exc)) from exc
+    source = "managed" if katago.managed else "configured external"
+    print(f"Using {source} KataGo: {katago.executable}")
+    if len(sgf_files) > 1 or args.sgf.is_dir():
+        print(f"Importing {len(sgf_files)} SGF file(s) from {args.sgf}.")
 
     root = cfg.output_root
     images_dir = root / "cards" / "images"
     renderer = BoardRenderer(cfg.image_size)
-    for card in cards:
-        board = board_at_turn(game, card.move_number - 1)
-        q = images_dir / f"{card.card_id}-question.png"
-        a = images_dir / f"{card.card_id}-answer.png"
-        renderer.render_question(board, q)
-        renderer.render_answer(
-            board,
-            card.analysis_before,
-            card.played_move,
-            a,
-            top_moves=cfg.top_moves,
+    all_cards = []
+
+    for index, sgf_path in enumerate(sgf_files, start=1):
+        if len(sgf_files) > 1:
+            print(f"\n[{index}/{len(sgf_files)}] {sgf_path.name}")
+        game, cards = _analyze_game(sgf_path, args, cfg, katago)
+        all_cards.extend(cards)
+
+        if args.dry_run:
+            continue
+
+        for card in cards:
+            board = board_at_turn(game, card.move_number - 1)
+            q = images_dir / f"{card.card_id}-question.png"
+            a = images_dir / f"{card.card_id}-answer.png"
+            renderer.render_question(board, q)
+            renderer.render_answer(
+                board,
+                card.analysis_before,
+                card.played_move,
+                a,
+                top_moves=cfg.top_moves,
+            )
+            card.question_image = str(q)
+            card.answer_image = str(a)
+
+    if args.dry_run:
+        print(
+            json.dumps(
+                [{"move": card.move_number, "loss_pp": card.loss_pp} for card in all_cards],
+                indent=2,
+            )
         )
-        card.question_image = str(q)
-        card.answer_image = str(a)
+        return 0
 
     manifest_path = root / "cards" / "manifest.json"
-    manifest = upsert_cards(manifest_path, cards)
+    manifest = upsert_cards(manifest_path, all_cards)
     deck_path = rebuild_slideshow(manifest, root / "deck" / "second-sight.pptx")
     print(f"Updated {manifest_path}")
     print(f"Updated {deck_path}")
